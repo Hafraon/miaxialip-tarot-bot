@@ -35,17 +35,25 @@ function addMandatoryFooter(postText) {
     if (!postText || typeof postText !== 'string') return postText;
     
     const footer = `
-
 🔮 Записатися на консультацію:
 🌐 theglamstyle.com.ua
 📱 Instagram: @miaxialip
 🤖 Telegram бот: @miaxialiptarotbot`;
     
-    // Перевіряємо чи вже є футер
-    if (!postText.includes('theglamstyle.com.ua')) {
-        return postText + footer;
-    }
-    return postText;
+    // ЗАВЖДИ додаємо футер, навіть якщо контакти уже є
+    // Спочатку видаляємо старі контакти, якщо є
+    let cleanText = postText;
+    
+    // Видаляємо можливі старі футери
+    cleanText = cleanText.replace(/🔮 Записатися на консультацію:[\s\S]*$/g, '');
+    cleanText = cleanText.replace(/theglamstyle\.com\.ua[\s\S]*$/g, '');
+    cleanText = cleanText.replace(/@miaxialip[\s\S]*$/g, '');
+    cleanText = cleanText.replace(/@miaxialiptarotbot[\s\S]*$/g, '');
+    
+    // Прибираємо зайві пробіли в кінці
+    cleanText = cleanText.trim();
+    
+    return cleanText + footer;
 }
 
 // Безпечна обгортка для відправки постів з автоматичним футером
@@ -58,10 +66,12 @@ async function sendSmartPostWithFooter(bot, channelId) {
         
         const result = await sendSmartPost(bot, channelId);
         
-        // Якщо пост не містить контактів - додаємо футер
-        if (result && typeof result === 'string' && !result.includes('theglamstyle.com.ua')) {
-            console.log('⚠️ Пост без контактів, додаю обов\'язковий футер...');
+        // ЗАВЖДИ додаємо контакти до кожного поста
+        if (result && typeof result === 'string') {
+            console.log('📬 Додаю обов\'язкові контакти до поста...');
             const correctedPost = addMandatoryFooter(result);
+            
+            // Відправляємо виправлений пост
             await bot.sendMessage(channelId, correctedPost);
             return correctedPost;
         }
@@ -85,9 +95,12 @@ function scheduleSmartPostsWithFooter(bot, channelId) {
         if (chatGPTIntegration && chatGPTIntegration.sendSmartPost) {
             const originalSendSmartPost = chatGPTIntegration.sendSmartPost;
             chatGPTIntegration.sendSmartPost = async (bot, channelId) => {
+                console.log('🤖 Генеруємо автопост...');
                 const result = await originalSendSmartPost(bot, channelId);
-                if (result && typeof result === 'string' && !result.includes('theglamstyle.com.ua')) {
-                    console.log('⚠️ Автопост без контактів, додаю футер...');
+                
+                // ЗАВЖДИ додаємо контакти до автопостів
+                if (result && typeof result === 'string') {
+                    console.log('📬 Додаю обов\'язкові контакти до автопоста...');
                     const correctedPost = addMandatoryFooter(result);
                     await bot.sendMessage(channelId, correctedPost);
                     return correctedPost;
@@ -779,13 +792,13 @@ bot.on('callback_query', async (callbackQuery) => {
                     
                 case 'admin_post_now':
                     try {
-                        await bot.editMessageText('📝 Генерую пост з обов\'язковими контактами...', {
+                        await bot.editMessageText('📝 Генерую пост + додаю контакти...', {
                             chat_id: chatId,
                             message_id: message.message_id
                         });
                         
                         const postResult = await sendSmartPostWithFooter(bot, CHANNEL_ID);
-                        await bot.editMessageText(`📝 **ПОСТ ВІДПРАВЛЕНО**\n\n${postResult ? '✅ Пост опублікований в каналі з контактами!' : '❌ Помилка публікації або ChatGPT недоступний!'}`, {
+                        await bot.editMessageText(`📝 **ПОСТ ВІДПРАВЛЕНО**\n\n${postResult ? '✅ Пост опублікований в каналі!\n📬 Контакти додано автоматично!' : '❌ Помилка публікації або ChatGPT недоступний!'}`, {
                             chat_id: chatId,
                             message_id: message.message_id,
                             parse_mode: 'Markdown'
@@ -844,7 +857,7 @@ bot.on('callback_query', async (callbackQuery) => {
 • Активні сесії очищено
 
 🔄 **Система працює стабільно!**
-📬 **Контакти додаються автоматично до всіх постів**`, {
+📬 **ГАРАНТІЯ:** Контакти додаються до ВСІХ постів автоматично`, {
                             chat_id: chatId,
                             message_id: message.message_id,
                             parse_mode: 'Markdown'
@@ -884,7 +897,7 @@ bot.on('callback_query', async (callbackQuery) => {
 
 ⚙️ **Система:**
 • Статус: ✅ Повний цикл (ліди → замовлення)
-• Контакти: ✅ Автоматично додаються до постів`;
+• Контакти: ✅ ГАРАНТОВАНО додаються до ВСІХ постів`;
 
                     await bot.editMessageText(statsMessage, {
                         chat_id: chatId,
@@ -1258,7 +1271,7 @@ async function startBot() {
     console.log('🎯 Лідогенерація + Прийом замовлень активні');
     console.log('🧠 ChatGPT контент для каналу активний');
     console.log('📊 Статистика збирається');
-    console.log('📬 Обов\'язкові контакти додаються до всіх постів');
+    console.log('📬 ОБОВ\'ЯЗКОВІ контакти додаються до ВСІХ постів');
     
     const hasOpenAI = process.env.OPENAI_API_KEY ? '✅' : '❌';
     const hasChatGPT = chatGPTIntegration && chatGPTIntegration.sendSmartPost !== (() => Promise.resolve(false)) ? '✅' : '❌';
@@ -1273,7 +1286,7 @@ async function startBot() {
 • ✅ Прийом замовлень (інтеграція з системою)
 • ${hasChatGPT} ChatGPT контент для каналу
 • ✅ Аналітика лідів та замовлень
-• ✅ Автоматичне додавання контактів до постів
+• ✅ КОНТАКТИ ДОДАЮТЬСЯ ДО ВСІХ ПОСТІВ АВТОМАТИЧНО
 
 📊 **Поточна статистика:**
 • Користувачів: ${users.size}
@@ -1283,7 +1296,7 @@ async function startBot() {
 🔗 **Повний цикл:**
 Канал → Бот → Безкоштовний розклад → Замовлення → Сповіщення адміну
 
-📬 **Контакти:** Автоматично додаються до кожного поста ChatGPT
+📬 **ГАРАНТІЯ:** Кожен пост ChatGPT матиме контакти!
 
 Команди:
 /admin - повна панель керування`);
@@ -1306,7 +1319,7 @@ cron.schedule('0 21 * * *', async () => {
 🔥 **Гарячі ліди:** ${stats.hotLeads}
 
 🤖 **ChatGPT:** ${gptStats.successRate}% успішність
-📬 **Контакти:** автоматично додаються до постів
+📬 **Контакти:** ГАРАНТОВАНО в КОЖНОМУ пості
 ⚡ **Ефективність:** повний цикл працює`;
 
         await bot.sendMessage(ADMIN_CHAT_ID, statsMessage, { parse_mode: 'Markdown' });
