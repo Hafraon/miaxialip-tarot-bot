@@ -669,24 +669,39 @@ bot.on('callback_query', async (callbackQuery) => {
                 
             case 'admin_restart':
                 try {
-                    await bot.editMessageText('🔄 Перезапускаю бот...', {
+                    await bot.editMessageText('🔄 Оновлюю дані...', {
                         chat_id: chatId,
                         message_id: message.message_id
                     });
                     
+                    // Зберігаємо всі дані
                     await saveUserData();
-                    await bot.editMessageText('✅ **БОТ ПЕРЕЗАПУЩЕНО**\n\nВсі дані збережено!', {
+                    
+                    // Перезавантажуємо дані
+                    await loadUserData();
+                    
+                    // Очищаємо кеші та сесії
+                    userSessions.clear();
+                    
+                    const stats = await getStatistics();
+                    
+                    await bot.editMessageText(`✅ **ДАНІ ОНОВЛЕНО**
+
+📊 **Поточний стан:**
+• Користувачів: ${stats.totalUsers}
+• Лідів: ${stats.totalLeads}  
+• Замовлень: ${stats.totalOrders}
+• Активні сесії очищено
+
+⚠️ **Для повного перезапуску** використовуйте панель Railway.
+
+🔄 **Система працює стабільно!**`, {
                         chat_id: chatId,
                         message_id: message.message_id,
                         parse_mode: 'Markdown'
                     });
-                    
-                    // Можна додати логіку перезапуску процесу
-                    setTimeout(() => {
-                        process.exit(0); // PM2 автоматично перезапустить
-                    }, 2000);
                 } catch (error) {
-                    await bot.editMessageText(`❌ **Помилка перезапуску:**\n\n${error.message}`, {
+                    await bot.editMessageText(`❌ **Помилка оновлення:**\n\n${error.message}`, {
                         chat_id: chatId,
                         message_id: message.message_id,
                         parse_mode: 'Markdown'
