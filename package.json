@@ -1,16 +1,21 @@
 {
   "name": "tarot-bot",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "tarot-bot.js",
   "scripts": {
+    "start": "node tarot-bot.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": ["telegram", "bot", "tarot", "chatgpt", "astrology"],
+  "author": "MiaxiaLip",
   "license": "ISC",
-  "description": "",
+  "description": "Telegram tarot bot with ChatGPT integration",
   "dependencies": {
-    "node-cron": "^4.1.0",
-    "node-telegram-bot-api": "^0.66.0"
+    "node-cron": "^4.1.0", 
+    "node-telegram-bot-api": "^0.66.0",
+    "axios": "^1.6.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
   }
 }
