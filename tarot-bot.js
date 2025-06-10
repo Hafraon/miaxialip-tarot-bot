@@ -71,10 +71,8 @@ async function sendSmartPostWithFooter(bot, channelId) {
             console.log('📬 Додаю обов\'язкові контакти до поста...');
             const correctedPost = addMandatoryFooter(result);
             
-            // Відправляємо виправлений пост БЕЗ preview посилання
-            await bot.sendMessage(channelId, correctedPost, {
-                disable_web_page_preview: true
-            });
+            // Відправляємо виправлений пост
+            await bot.sendMessage(channelId, correctedPost);
             return correctedPost;
         }
         
@@ -104,11 +102,7 @@ function scheduleSmartPostsWithFooter(bot, channelId) {
                 if (result && typeof result === 'string') {
                     console.log('📬 Додаю обов\'язкові контакти до автопоста...');
                     const correctedPost = addMandatoryFooter(result);
-                    
-                    // Відправляємо БЕЗ preview посилання
-                    await bot.sendMessage(channelId, correctedPost, {
-                        disable_web_page_preview: true
-                    });
+                    await bot.sendMessage(channelId, correctedPost);
                     return correctedPost;
                 }
                 return result;
@@ -804,7 +798,7 @@ bot.on('callback_query', async (callbackQuery) => {
                         });
                         
                         const postResult = await sendSmartPostWithFooter(bot, CHANNEL_ID);
-                        await bot.editMessageText(`📝 **ПОСТ ВІДПРАВЛЕНО**\n\n${postResult ? '✅ Пост опублікований в каналі!\n📬 Контакти додано автоматично!\n🔗 Preview посилання відключено' : '❌ Помилка публікації або ChatGPT недоступний!'}`, {
+                        await bot.editMessageText(`📝 **ПОСТ ВІДПРАВЛЕНО**\n\n${postResult ? '✅ Пост опублікований в каналі!\n📬 Контакти додано автоматично!' : '❌ Помилка публікації або ChatGPT недоступний!'}`, {
                             chat_id: chatId,
                             message_id: message.message_id,
                             parse_mode: 'Markdown'
@@ -863,8 +857,7 @@ bot.on('callback_query', async (callbackQuery) => {
 • Активні сесії очищено
 
 🔄 **Система працює стабільно!**
-📬 **ГАРАНТІЯ:** Контакти додаються до ВСІХ постів автоматично
-🔗 **ЧИСТО:** Preview посилань відключено`, {
+📬 **ГАРАНТІЯ:** Контакти додаються до ВСІХ постів автоматично`, {
                             chat_id: chatId,
                             message_id: message.message_id,
                             parse_mode: 'Markdown'
@@ -904,8 +897,7 @@ bot.on('callback_query', async (callbackQuery) => {
 
 ⚙️ **Система:**
 • Статус: ✅ Повний цикл (ліди → замовлення)
-• Контакти: ✅ ГАРАНТОВАНО додаються до ВСІХ постів
-• Preview: ✅ Відключено для чистого вигляду каналу`;
+• Контакти: ✅ ГАРАНТОВАНО додаються до ВСІХ постів`;
 
                     await bot.editMessageText(statsMessage, {
                         chat_id: chatId,
@@ -1280,7 +1272,6 @@ async function startBot() {
     console.log('🧠 ChatGPT контент для каналу активний');
     console.log('📊 Статистика збирається');
     console.log('📬 ОБОВ\'ЯЗКОВІ контакти додаються до ВСІХ постів');
-    console.log('🔗 Preview посилань відключено в постах каналу');
     
     const hasOpenAI = process.env.OPENAI_API_KEY ? '✅' : '❌';
     const hasChatGPT = chatGPTIntegration && chatGPTIntegration.sendSmartPost !== (() => Promise.resolve(false)) ? '✅' : '❌';
@@ -1296,7 +1287,6 @@ async function startBot() {
 • ${hasChatGPT} ChatGPT контент для каналу
 • ✅ Аналітика лідів та замовлень
 • ✅ КОНТАКТИ ДОДАЮТЬСЯ ДО ВСІХ ПОСТІВ АВТОМАТИЧНО
-• ✅ Preview посилань відключено в постах каналу
 
 📊 **Поточна статистика:**
 • Користувачів: ${users.size}
@@ -1307,7 +1297,6 @@ async function startBot() {
 Канал → Бот → Безкоштовний розклад → Замовлення → Сповіщення адміну
 
 📬 **ГАРАНТІЯ:** Кожен пост ChatGPT матиме контакти!
-🔗 **ЧИСТО:** Без preview посилань!
 
 Команди:
 /admin - повна панель керування`);
@@ -1331,7 +1320,6 @@ cron.schedule('0 21 * * *', async () => {
 
 🤖 **ChatGPT:** ${gptStats.successRate}% успішність
 📬 **Контакти:** ГАРАНТОВАНО в КОЖНОМУ пості
-🔗 **Preview:** відключено для чистого вигляду
 ⚡ **Ефективність:** повний цикл працює`;
 
         await bot.sendMessage(ADMIN_CHAT_ID, statsMessage, { parse_mode: 'Markdown' });
