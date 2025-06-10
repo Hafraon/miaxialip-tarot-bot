@@ -1,5 +1,5 @@
-// Телеграм бот для таро MiaxiaLip - ЛІДОГЕНЕРАЦІЯ + ChatGPT контент
-// Роль: збір лідів, безкоштовні розклади, контент для каналу
+// Телеграм бот для таро MiaxiaLip - ЛІДОГЕНЕРАЦІЯ + ФОРМА ЗАМОВЛЕННЯ
+// Роль: збір лідів, безкоштовні розклади, контент для каналу, ПРИЙОМ ЗАМОВЛЕНЬ
 // Запуск: node tarot-bot.js
 
 const TelegramBot = require('node-telegram-bot-api');
@@ -31,27 +31,31 @@ try {
 const BOT_TOKEN = config.telegram.botToken;
 const ADMIN_CHAT_ID = config.telegram.adminChatId;
 const CHANNEL_ID = config.telegram.channelId;
+const OLD_BOT_CHAT_ID = '@MiaxiaTaro_bot'; // ID старого бота для сповіщень
 
 // Перевірка обов'язкових параметрів
 if (!BOT_TOKEN || BOT_TOKEN === 'ВСТАВТЕ_ВАШ_ТОКЕН_БОТА_СЮДИ') {
     console.error('❌ Помилка: Не вказано токен бота в config.js');
-    console.error('Отримайте токен від @BotFather і вставте в config.js');
-    process.exit(1);
-}
-
-if (!ADMIN_CHAT_ID || ADMIN_CHAT_ID === 'ВСТАВТЕ_ВАШ_CHAT_ID_СЮДИ') {
-    console.error('❌ Помилка: Не вказано Chat ID адміна в config.js');
-    console.error('Отримайте Chat ID від @userinfobot і вставте в config.js');
     process.exit(1);
 }
 
 // Ініціалізація бота
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
-// База даних користувачів та лідів
+// База даних користувачів, лідів та замовлень
 let users = new Map();
-let leads = new Map(); // Для збору потенційних клієнтів
+let leads = new Map();
+let orders = new Map(); // Для збереження замовлень
 let userSessions = new Map();
+
+// Стани для форми замовлення
+const ORDER_STATES = {
+    WAITING_NAME: 'waiting_name',
+    WAITING_PHONE: 'waiting_phone', 
+    WAITING_SERVICE: 'waiting_service',
+    WAITING_INSTAGRAM: 'waiting_instagram',
+    CONFIRMING: 'confirming'
+};
 
 // Картки Таро для безкоштовних розкладів
 const tarotCards = [
@@ -79,21 +83,18 @@ const tarotCards = [
     { name: "Світ", meaning: "Завершення, досягнення, виконання", emoji: "🌍" }
 ];
 
-// Зодіакальні знаки
-const zodiacSigns = [
-    { name: "Овен", emoji: "♈", dates: "21.03 - 19.04" },
-    { name: "Телець", emoji: "♉", dates: "20.04 - 20.05" },
-    { name: "Близнюки", emoji: "♊", dates: "21.05 - 20.06" },
-    { name: "Рак", emoji: "♋", dates: "21.06 - 22.07" },
-    { name: "Лев", emoji: "♌", dates: "23.07 - 22.08" },
-    { name: "Діва", emoji: "♍", dates: "23.08 - 22.09" },
-    { name: "Терези", emoji: "♎", dates: "23.09 - 22.10" },
-    { name: "Скорпіон", emoji: "♏", dates: "23.10 - 21.11" },
-    { name: "Стрілець", emoji: "♐", dates: "22.11 - 21.12" },
-    { name: "Козеріг", emoji: "♑", dates: "22.12 - 19.01" },
-    { name: "Водолій", emoji: "♒", dates: "20.01 - 18.02" },
-    { name: "Риби", emoji: "♓", dates: "19.02 - 20.03" }
-];
+// Список послуг
+const SERVICES = {
+    'individual': { name: '1 питання', price: 70, originalPrice: 100 },
+    'love': { name: 'Любовний прогноз', price: 280, originalPrice: 350 },
+    'career': { name: 'Кар\'єра і фінанси', price: 350, originalPrice: 400 },
+    'full': { name: '"Про себе" (6 питань)', price: 450, originalPrice: 500 },
+    'relationship': { name: '"Стосунки" (6 питань)', price: 390, originalPrice: 450 },
+    'business': { name: '"Бізнес" (6 питань)', price: 400, originalPrice: 450 },
+    'matrix': { name: 'Персональна матриця', price: 570, originalPrice: 650 },
+    'compatibility': { name: 'Матриця сумісності', price: 550, originalPrice: 600 },
+    'year': { name: 'Аркан на рік', price: 560, originalPrice: 600 }
+};
 
 // Функції для роботи з базою даних
 async function saveUserData() {
@@ -101,25 +102,28 @@ async function saveUserData() {
         const data = {
             users: Array.from(users.entries()),
             leads: Array.from(leads.entries()),
+            orders: Array.from(orders.entries()),
             lastSave: new Date().toISOString()
         };
-        await fs.writeFile('users_leads.json', JSON.stringify(data, null, 2));
+        await fs.writeFile('users_leads_orders.json', JSON.stringify(data, null, 2));
     } catch (error) {
-        console.error('Помилка збереження користувачів:', error);
+        console.error('Помилка збереження даних:', error);
     }
 }
 
 async function loadUserData() {
     try {
-        const data = await fs.readFile('users_leads.json', 'utf8');
+        const data = await fs.readFile('users_leads_orders.json', 'utf8');
         const parsed = JSON.parse(data);
         users = new Map(parsed.users || []);
         leads = new Map(parsed.leads || []);
-        console.log(`Завантажено ${users.size} користувачів та ${leads.size} лідів`);
+        orders = new Map(parsed.orders || []);
+        console.log(`Завантажено ${users.size} користувачів, ${leads.size} лідів, ${orders.size} замовлень`);
     } catch (error) {
-        console.log('Файл користувачів не знайдено, створюємо новий');
+        console.log('Файл даних не знайдено, створюємо новий');
         users = new Map();
         leads = new Map();
+        orders = new Map();
     }
 }
 
@@ -129,7 +133,7 @@ function collectLead(chatId, user, action) {
         chatId: chatId,
         firstName: user.firstName || 'Невідомо',
         username: user.username || '',
-        action: action, // 'free_reading', 'consultation_interest', 'question_asked'
+        action: action,
         timestamp: new Date().toISOString(),
         readingsCount: leads.has(chatId) ? leads.get(chatId).readingsCount + 1 : 1
     };
@@ -139,7 +143,7 @@ function collectLead(chatId, user, action) {
     // Сповістити адміна про активного ліда
     if (leadData.readingsCount >= 3) {
         bot.sendMessage(ADMIN_CHAT_ID, 
-            `🔥 ГАРЯЧИЙ ЛІД!\n\n👤 ${leadData.firstName} (@${leadData.username})\n📊 Розкладів: ${leadData.readingsCount}\n💡 Рекомендую зв'язатися!`);
+            `🔥 ГАРЯЧИЙ ЛІД!\n\n👤 ${leadData.firstName} (@${leadData.username})\n📊 Розкладів: ${leadData.readingsCount}\n💡 Готовий до замовлення!`);
     }
     
     saveUserData();
@@ -156,36 +160,39 @@ const mainKeyboard = {
         keyboard: [
             ['🔮 Безкоштовний розклад', '💝 Любовний прогноз'],
             ['⭐ Гороскоп на день', '🎯 Задати питання'],
-            ['📞 Замовити консультацію', '💎 Про MiaxiaLip'],
-            ['📺 Наш канал', '🎁 Спеціальні ціни']
+            ['📞 Замовити консультацію', '⚡ Швидке замовлення'],
+            ['💎 Про MiaxiaLip', '📺 Наш канал'],
+            ['🎁 Спеціальні ціни']
         ],
         resize_keyboard: true,
         one_time_keyboard: false
     }
 };
 
-const zodiacKeyboard = {
+const servicesKeyboard = {
     reply_markup: {
         inline_keyboard: [
             [
-                { text: '♈ Овен', callback_data: 'zodiac_aries' },
-                { text: '♉ Телець', callback_data: 'zodiac_taurus' },
-                { text: '♊ Близнюки', callback_data: 'zodiac_gemini' }
+                { text: '🔥 1 питання - 70 грн', callback_data: 'service_individual' },
+                { text: '💝 Любовний - 280 грн', callback_data: 'service_love' }
             ],
             [
-                { text: '♋ Рак', callback_data: 'zodiac_cancer' },
-                { text: '♌ Лев', callback_data: 'zodiac_leo' },
-                { text: '♍ Діва', callback_data: 'zodiac_virgo' }
+                { text: '🎯 Кар\'єра - 350 грн', callback_data: 'service_career' },
+                { text: '🌟 "Про себе" - 450 грн', callback_data: 'service_full' }
             ],
             [
-                { text: '♎ Терези', callback_data: 'zodiac_libra' },
-                { text: '♏ Скорпіон', callback_data: 'zodiac_scorpio' },
-                { text: '♐ Стрілець', callback_data: 'zodiac_sagittarius' }
+                { text: '💕 "Стосунки" - 390 грн', callback_data: 'service_relationship' },
+                { text: '🏢 "Бізнес" - 400 грн', callback_data: 'service_business' }
             ],
             [
-                { text: '♑ Козеріг', callback_data: 'zodiac_capricorn' },
-                { text: '♒ Водолій', callback_data: 'zodiac_aquarius' },
-                { text: '♓ Риби', callback_data: 'zodiac_pisces' }
+                { text: '⭐ Матриця - 570 грн', callback_data: 'service_matrix' },
+                { text: '💫 Сумісність - 550 грн', callback_data: 'service_compatibility' }
+            ],
+            [
+                { text: '🎯 Аркан на рік - 560 грн', callback_data: 'service_year' }
+            ],
+            [
+                { text: '🔙 Назад', callback_data: 'back_to_main' }
             ]
         ]
     }
@@ -204,6 +211,7 @@ const adminKeyboard = {
                 { text: '👥 Ліди', callback_data: 'admin_leads' }
             ],
             [
+                { text: '📋 Замовлення', callback_data: 'admin_orders' },
                 { text: '🔄 Перезапуск', callback_data: 'admin_restart' }
             ]
         ]
@@ -234,6 +242,7 @@ bot.onText(/\/start/, async (msg) => {
 • 💝 Любовний прогноз
 • ⭐ Гороскоп за вашим знаком  
 • 🎯 Відповідь на особисте питання
+• ⚡ Швидке замовлення консультації
 
 🎁 **Спеціальна пропозиція:** перша персональна консультація всього 70 грн!
 
@@ -248,28 +257,7 @@ bot.onText(/\/start/, async (msg) => {
 // Адмін команди
 bot.onText(/\/admin/, async (msg) => {
     if (msg.chat.id.toString() === ADMIN_CHAT_ID) {
-        await bot.sendMessage(ADMIN_CHAT_ID, '👑 Панель лідогенерації:', adminKeyboard);
-    }
-});
-
-bot.onText(/\/test_gpt/, async (msg) => {
-    if (msg.chat.id.toString() === ADMIN_CHAT_ID) {
-        await testChatGPT(bot, msg.chat.id);
-    } else {
-        await bot.sendMessage(msg.chat.id, '❌ Ця команда доступна тільки адміну');
-    }
-});
-
-bot.onText(/\/post_now/, async (msg) => {
-    if (msg.chat.id.toString() === ADMIN_CHAT_ID) {
-        try {
-            await sendSmartPost(bot, CHANNEL_ID);
-            await bot.sendMessage(msg.chat.id, '✅ Розумний пост відправлено в канал!');
-        } catch (error) {
-            await bot.sendMessage(msg.chat.id, `❌ Помилка: ${error.message}`);
-        }
-    } else {
-        await bot.sendMessage(msg.chat.id, '❌ Ця команда доступна тільки адміну');
+        await bot.sendMessage(ADMIN_CHAT_ID, '👑 Панель лідогенерації + замовлень:', adminKeyboard);
     }
 });
 
@@ -284,6 +272,12 @@ bot.on('message', async (msg) => {
         users.set(chatId, user);
     }
     
+    // Перевіряємо чи користувач в процесі замовлення
+    if (userSessions.has(chatId) && userSessions.get(chatId).orderInProgress) {
+        await handleOrderStep(chatId, text);
+        return;
+    }
+    
     switch (text) {
         case '🔮 Безкоштовний розклад':
             await handleFreeReading(chatId);
@@ -294,7 +288,7 @@ bot.on('message', async (msg) => {
             break;
             
         case '⭐ Гороскоп на день':
-            await bot.sendMessage(chatId, '🌟 Оберіть ваш знак зодіаку:', zodiacKeyboard);
+            await bot.sendMessage(chatId, '🌟 Функція гороскопу буде додана незабаром!');
             break;
             
         case '🎯 Задати питання':
@@ -303,6 +297,10 @@ bot.on('message', async (msg) => {
             
         case '📞 Замовити консультацію':
             await handleConsultationRedirect(chatId);
+            break;
+            
+        case '⚡ Швидке замовлення':
+            await startQuickOrder(chatId);
             break;
             
         case '💎 Про MiaxiaLip':
@@ -324,24 +322,259 @@ bot.on('message', async (msg) => {
     }
 });
 
+// НОВА ФУНКЦІЯ: ШВИДКЕ ЗАМОВЛЕННЯ
+async function startQuickOrder(chatId) {
+    const quickOrderMessage = `⚡ **ШВИДКЕ ЗАМОВЛЕННЯ**
+
+🔮 Оберіть послугу, яка вас цікавить:
+
+💎 Всі ціни зі знижкою для користувачів бота!`;
+
+    await bot.sendMessage(chatId, quickOrderMessage, {
+        parse_mode: 'Markdown',
+        ...servicesKeyboard
+    });
+    
+    // Збираємо лід
+    if (users.has(chatId)) {
+        collectLead(chatId, users.get(chatId), 'quick_order_started');
+    }
+}
+
+// Обробка кроків замовлення
+async function handleOrderStep(chatId, text) {
+    const session = userSessions.get(chatId);
+    const orderData = session.orderData;
+    
+    switch (session.orderState) {
+        case ORDER_STATES.WAITING_NAME:
+            orderData.name = text.trim();
+            session.orderState = ORDER_STATES.WAITING_PHONE;
+            await bot.sendMessage(chatId, '📱 **Вкажіть ваш номер телефону:**\n\nНаприклад: +380123456789', {parse_mode: 'Markdown'});
+            break;
+            
+        case ORDER_STATES.WAITING_PHONE:
+            orderData.phone = text.trim();
+            session.orderState = ORDER_STATES.WAITING_INSTAGRAM;
+            await bot.sendMessage(chatId, '📷 **Вкажіть ваш Instagram (необов\'язково):**\n\nНаприклад: @username або пропустіть написавши "немає"', {parse_mode: 'Markdown'});
+            break;
+            
+        case ORDER_STATES.WAITING_INSTAGRAM:
+            orderData.instagram = text.trim().toLowerCase() === 'немає' ? '' : text.trim();
+            session.orderState = ORDER_STATES.CONFIRMING;
+            await showOrderConfirmation(chatId, orderData);
+            break;
+    }
+    
+    userSessions.set(chatId, session);
+}
+
+// Показ підтвердження замовлення
+async function showOrderConfirmation(chatId, orderData) {
+    const service = SERVICES[orderData.serviceKey];
+    
+    const confirmationMessage = `✅ **ПІДТВЕРДЖЕННЯ ЗАМОВЛЕННЯ**
+
+👤 **Ім'я:** ${orderData.name}
+📱 **Телефон:** ${orderData.phone}
+🔮 **Послуга:** ${service.name}
+💰 **Ціна:** ${service.price} грн ${service.originalPrice > service.price ? `(зі знижкою з ${service.originalPrice} грн)` : ''}
+📷 **Instagram:** ${orderData.instagram || 'не вказано'}
+
+💫 **Що далі:**
+• Після підтвердження з вами зв'яжеться MiaxiaLip
+• Оплата після консультації
+• Тривалість: 20-30 хвилин
+• Формат: голосові повідомлення/відео
+
+Підтверджуєте замовлення?`;
+
+    await bot.sendMessage(chatId, confirmationMessage, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    { text: '✅ Підтверджую', callback_data: 'confirm_order' },
+                    { text: '❌ Скасувати', callback_data: 'cancel_order' }
+                ],
+                [
+                    { text: '✏️ Редагувати', callback_data: 'edit_order' }
+                ]
+            ]
+        }
+    });
+}
+
+// Підтвердження замовлення
+async function confirmOrder(chatId) {
+    const session = userSessions.get(chatId);
+    const orderData = session.orderData;
+    const service = SERVICES[orderData.serviceKey];
+    
+    // Генеруємо ID замовлення
+    const orderId = Date.now().toString();
+    
+    // Зберігаємо замовлення
+    const orderRecord = {
+        id: orderId,
+        chatId: chatId,
+        name: orderData.name,
+        phone: orderData.phone,
+        service: service.name,
+        price: service.price,
+        instagram: orderData.instagram,
+        status: 'new',
+        timestamp: new Date().toISOString(),
+        source: 'Telegram бот (лідогенерація)'
+    };
+    
+    orders.set(orderId, orderRecord);
+    
+    // Відправляємо замовлення адміну (в форматі як з сайту)
+    const adminNotification = `🔔 **Нове замовлення з бота лідогенерації!**
+
+👤 **Ім'я:** ${orderData.name}
+📱 **Телефон:** ${orderData.phone}  
+🔮 **Послуга:** ${service.name}
+💰 **Ціна:** ${service.price} грн
+📷 **Instagram:** ${orderData.instagram || 'не вказано'}
+
+🤖 **Джерело:** Telegram бот @miaxialip_tarot_bot
+📅 **Дата подачі:** ${new Date().toLocaleString('uk-UA')}
+🆔 **ID замовлення:** ${orderId}
+
+📞 **Дії:** Зв'яжіться з клієнтом для уточнення деталей`;
+
+    await bot.sendMessage(ADMIN_CHAT_ID, adminNotification, {parse_mode: 'Markdown'});
+    
+    // ТАКОЖ відправляємо в старий бот формат (якщо потрібно)
+    const oldBotFormat = `🔔 Нове замовлення з сайту MiaxiaLip!
+
+👤 Ім'я: ${orderData.name}
+📱 Телефон: ${orderData.phone}
+🔮 Послуга: ${service.name}
+📷 Instagram: ${orderData.instagram || '@не_вказано'}
+
+🌐 Сайт: theglamstyle.com.ua (через бот)
+📅 Дата подачі: ${new Date().toLocaleString('uk-UA')}`;
+    
+    // Можна відправити це повідомлення в канал старого бота, якщо потрібно
+    
+    // Повідомляємо користувача
+    await bot.sendMessage(chatId, `🎉 **ЗАМОВЛЕННЯ ПІДТВЕРДЖЕНО!**
+
+✅ Ваше замовлення №${orderId} прийнято
+
+📞 **З вами зв'яжеться MiaxiaLip протягом 2-3 годин**
+
+💰 **Оплата:** після консультації
+⏰ **Тривалість:** 20-30 хвилин  
+📱 **Формат:** голосові повідомлення або відео
+
+🙏 Дякуємо за довіру! Незабаром ви отримаєте відповіді на свої питання!
+
+📺 Підписуйтесь на наш канал: @MiaxiaLipTarot`, {
+        parse_mode: 'Markdown',
+        reply_markup: mainKeyboard.reply_markup
+    });
+    
+    // Очищаємо сесію
+    userSessions.delete(chatId);
+    
+    // Зберігаємо дані
+    await saveUserData();
+    
+    // Збираємо лід як конверсію
+    if (users.has(chatId)) {
+        collectLead(chatId, users.get(chatId), 'order_completed');
+    }
+}
+
 // Обробка callback кнопок
 bot.on('callback_query', async (callbackQuery) => {
     const message = callbackQuery.message;
     const data = callbackQuery.data;
     const chatId = message.chat.id;
     
+    // Сервіси
+    if (data.startsWith('service_')) {
+        const serviceKey = data.replace('service_', '');
+        const service = SERVICES[serviceKey];
+        
+        if (service) {
+            // Початок процесу замовлення
+            const orderData = {
+                serviceKey: serviceKey,
+                name: '',
+                phone: '',
+                instagram: ''
+            };
+            
+            userSessions.set(chatId, {
+                orderInProgress: true,
+                orderState: ORDER_STATES.WAITING_NAME,
+                orderData: orderData
+            });
+            
+            await bot.editMessageText(`📝 **ЗАМОВЛЕННЯ: ${service.name.toUpperCase()}**
+
+💰 **Ціна:** ${service.price} грн ${service.originalPrice > service.price ? `(зі знижкою з ${service.originalPrice} грн)` : ''}
+
+👤 **Вкажіть ваше ім'я:**`, {
+                chat_id: chatId,
+                message_id: message.message_id,
+                parse_mode: 'Markdown'
+            });
+        }
+    }
+    
+    // Підтвердження замовлення
+    if (data === 'confirm_order') {
+        await confirmOrder(chatId);
+    }
+    
+    if (data === 'cancel_order') {
+        userSessions.delete(chatId);
+        await bot.editMessageText('❌ Замовлення скасовано', {
+            chat_id: chatId,
+            message_id: message.message_id
+        });
+    }
+    
+    if (data === 'edit_order') {
+        // Перезапускаємо процес замовлення
+        const session = userSessions.get(chatId);
+        if (session) {
+            session.orderState = ORDER_STATES.WAITING_NAME;
+            userSessions.set(chatId, session);
+            
+            await bot.editMessageText(`✏️ **РЕДАГУВАННЯ ЗАМОВЛЕННЯ**
+
+👤 **Вкажіть ваше ім'я:**`, {
+                chat_id: chatId,
+                message_id: message.message_id,
+                parse_mode: 'Markdown'
+            });
+        }
+    }
+    
     // Адмін кнопки
     if (data.startsWith('admin_') && chatId.toString() === ADMIN_CHAT_ID) {
         switch (data) {
-            case 'admin_test_gpt':
-                await testChatGPT(bot, chatId);
+            case 'admin_orders':
+                const ordersReport = await generateOrdersReport();
+                await bot.editMessageText(ordersReport, {
+                    chat_id: chatId,
+                    message_id: message.message_id,
+                    parse_mode: 'Markdown'
+                });
                 break;
                 
             case 'admin_stats':
                 const stats = await getStatistics();
                 const gptStats = getChatGPTStats();
                 
-                const statsMessage = `📊 **СТАТИСТИКА ЛІДОГЕНЕРАЦІЇ**
+                const statsMessage = `📊 **СТАТИСТИКА ЛІДОГЕНЕРАЦІЇ + ЗАМОВЛЕНЬ**
 
 👥 **Користувачі:**
 • Всього: ${stats.totalUsers}
@@ -353,13 +586,16 @@ bot.on('callback_query', async (callbackQuery) => {
 • Гарячі ліди: ${stats.hotLeads}
 • Конверсія: ${stats.conversionRate}%
 
+📋 **Замовлення:**
+• Всього замовлень: ${stats.totalOrders}
+• Сьогодні: ${stats.ordersToday}
+• Конверсія лідів: ${stats.orderConversionRate}%
+
 🤖 **ChatGPT:**
-• Всього згенеровано: ${gptStats.totalGenerated}
 • Успішність: ${gptStats.successRate}%
 
 ⚙️ **Система:**
-• Статус ChatGPT: ${process.env.OPENAI_API_KEY ? '✅ Активний' : '❌ Неактивний'}
-• Канал: ${CHANNEL_ID}`;
+• Статус: ✅ Повний цикл (ліди → замовлення)`;
 
                 await bot.editMessageText(statsMessage, {
                     chat_id: chatId,
@@ -367,84 +603,13 @@ bot.on('callback_query', async (callbackQuery) => {
                     parse_mode: 'Markdown'
                 });
                 break;
-                
-            case 'admin_leads':
-                const leadsReport = await generateLeadsReport();
-                await bot.editMessageText(leadsReport, {
-                    chat_id: chatId,
-                    message_id: message.message_id,
-                    parse_mode: 'Markdown'
-                });
-                break;
-                
-            case 'admin_post_now':
-                try {
-                    await sendSmartPost(bot, CHANNEL_ID);
-                    await bot.editMessageText('✅ Розумний пост відправлено в канал!', {
-                        chat_id: chatId,
-                        message_id: message.message_id
-                    });
-                } catch (error) {
-                    await bot.editMessageText(`❌ Помилка: ${error.message}`, {
-                        chat_id: chatId,
-                        message_id: message.message_id
-                    });
-                }
-                break;
-                
-            case 'admin_restart':
-                await bot.editMessageText('🔄 Перезапуск бота...', {
-                    chat_id: chatId,
-                    message_id: message.message_id
-                });
-                
-                await saveUserData();
-                setTimeout(() => {
-                    process.exit(0);
-                }, 2000);
-                break;
         }
-    }
-    
-    // Зодіакальні кнопки
-    if (data.startsWith('zodiac_')) {
-        const signKey = data.replace('zodiac_', '');
-        const sign = zodiacSigns.find(z => z.name.toLowerCase() === getZodiacName(signKey));
-        
-        if (sign) {
-            const horoscope = generateHoroscope(sign);
-            await bot.editMessageText(horoscope, {
-                chat_id: message.chat.id,
-                message_id: message.message_id,
-                reply_markup: {
-                    inline_keyboard: [[
-                        { text: '🔄 Інший знак', callback_data: 'show_zodiac_menu' },
-                        { text: '📞 Персональний гороскоп', url: 'https://theglamstyle.com.ua' }
-                    ]]
-                }
-            });
-            
-            // Збираємо лід
-            if (users.has(message.chat.id)) {
-                collectLead(message.chat.id, users.get(message.chat.id), 'horoscope_viewed');
-            }
-        }
-    }
-    
-    if (data === 'show_zodiac_menu') {
-        await bot.editMessageText('🌟 Оберіть ваш знак зодіаку:', {
-            chat_id: message.chat.id,
-            message_id: message.message_id,
-            reply_markup: zodiacKeyboard.reply_markup
-        });
     }
     
     await bot.answerCallbackQuery(callbackQuery.id);
 });
 
-// ОСНОВНІ ФУНКЦІЇ ЛІДОГЕНЕРАЦІЇ
-
-// Безкоштовний розклад (головний лід-магніт)
+// РЕШТА ФУНКЦІЙ (безкоштовні розклади і т.д.)
 async function handleFreeReading(chatId) {
     const cards = [getRandomCard(), getRandomCard(), getRandomCard()];
     
@@ -467,8 +632,8 @@ ${cards[2].meaning}
         parse_mode: 'Markdown',
         reply_markup: {
             inline_keyboard: [
-                [{ text: '💝 Замовити персональну консультацію', url: 'https://theglamstyle.com.ua' }],
-                [{ text: '🤖 Швидке замовлення', url: 'https://t.me/MiaxiaTaro_bot' }]
+                [{ text: '⚡ Швидке замовлення - 70 грн', callback_data: 'service_individual' }],
+                [{ text: '🌐 Замовити через сайт', url: 'https://theglamstyle.com.ua' }]
             ]
         }
     });
@@ -479,7 +644,7 @@ ${cards[2].meaning}
     }
 }
 
-// Любовний прогноз
+// Інші функції залишаємо без змін...
 async function handleLoveReading(chatId) {
     const cards = [getRandomCard(), getRandomCard()];
     
@@ -499,39 +664,17 @@ ${cards[1].meaning}
         parse_mode: 'Markdown',
         reply_markup: {
             inline_keyboard: [
-                [{ text: '💝 Замовити любовний розклад', url: 'https://theglamstyle.com.ua' }],
-                [{ text: '🤖 Швидке замовлення', url: 'https://t.me/MiaxiaTaro_bot' }]
+                [{ text: '⚡ Замовити любовний розклад', callback_data: 'service_love' }],
+                [{ text: '🌐 Замовити через сайт', url: 'https://theglamstyle.com.ua' }]
             ]
         }
     });
     
-    // Збираємо лід
     if (users.has(chatId)) {
         collectLead(chatId, users.get(chatId), 'love_reading');
     }
 }
 
-// Промпт для питання
-async function handleQuestionPrompt(chatId) {
-    const promptMessage = `🎯 **ЗАДАЙТЕ ВАШЕ ПИТАННЯ**
-
-Напишіть своє питання, і я дам вам безкоштовну відповідь через карти Таро!
-
-💡 **Приклади питань:**
-• Чи варто міняти роботу?
-• Як покращити стосунки?
-• Що мене чекає цього місяця?
-• Чи правильно я роблю?
-
-✨ Просто напишіть своє питання наступним повідомленням!`;
-
-    await bot.sendMessage(chatId, promptMessage, { parse_mode: 'Markdown' });
-    
-    // Встановлюємо статус очікування питання
-    userSessions.set(chatId, { waitingForQuestion: true });
-}
-
-// Обробка питання користувача
 async function handleUserQuestion(chatId, question) {
     const card = getRandomCard();
     
@@ -551,23 +694,33 @@ async function handleUserQuestion(chatId, question) {
         parse_mode: 'Markdown',
         reply_markup: {
             inline_keyboard: [
-                [{ text: '💎 Замовити детальну консультацію', url: 'https://theglamstyle.com.ua' }],
-                [{ text: '🤖 Швидке замовлення', url: 'https://t.me/MiaxiaTaro_bot' }],
+                [{ text: '⚡ Замовити консультацію - 70 грн', callback_data: 'service_individual' }],
                 [{ text: '🔮 Ще одне питання', callback_data: 'ask_another' }]
             ]
         }
     });
     
-    // Збираємо лід
     if (users.has(chatId)) {
         collectLead(chatId, users.get(chatId), 'question_asked');
     }
-    
-    // Очищаємо сесію
-    userSessions.delete(chatId);
 }
 
-// Перенаправлення на замовлення (КЛЮЧОВА ФУНКЦІЯ)
+async function handleQuestionPrompt(chatId) {
+    const promptMessage = `🎯 **ЗАДАЙТЕ ВАШЕ ПИТАННЯ**
+
+Напишіть своє питання, і я дам вам безкоштовну відповідь через карти Таро!
+
+💡 **Приклади питань:**
+• Чи варто міняти роботу?
+• Як покращити стосунки?
+• Що мене чекає цього місяця?
+• Чи правильно я роблю?
+
+✨ Просто напишіть своє питання наступним повідомленням!`;
+
+    await bot.sendMessage(chatId, promptMessage, { parse_mode: 'Markdown' });
+}
+
 async function handleConsultationRedirect(chatId) {
     const redirectMessage = `📞 **ПЕРСОНАЛЬНА КОНСУЛЬТАЦІЯ**
 
@@ -588,20 +741,18 @@ async function handleConsultationRedirect(chatId) {
         parse_mode: 'Markdown',
         reply_markup: {
             inline_keyboard: [
+                [{ text: '⚡ Швидке замовлення в боті', callback_data: 'service_individual' }],
                 [{ text: '🌐 Замовити через сайт', url: 'https://theglamstyle.com.ua' }],
-                [{ text: '🤖 Швидке замовлення в боті', url: 'https://t.me/MiaxiaTaro_bot' }],
                 [{ text: '📱 Написати в Instagram', url: 'https://instagram.com/miaxialip' }]
             ]
         }
     });
     
-    // Збираємо лід
     if (users.has(chatId)) {
         collectLead(chatId, users.get(chatId), 'consultation_interest');
     }
 }
 
-// Промо каналу
 async function handleChannelPromo(chatId) {
     const channelMessage = `📺 **НАШ TELEGRAM КАНАЛ**
 
@@ -629,42 +780,41 @@ async function handleChannelPromo(chatId) {
     });
 }
 
-// Спеціальні ціни
 async function handleSpecialPrices(chatId) {
-    const pricesMessage = `🎁 **СПЕЦІАЛЬНІ ЦІНИ ДЛЯ ВАС**
+    const pricesMessage = `🎁 **СПЕЦІАЛЬНІ ЦІНИ ДЛЯ КОРИСТУВАЧІВ БОТА**
 
 💎 **АКЦІЙНІ ПРОПОЗИЦІЇ:**
 
 🔥 **1 питання** - 70 грн (замість 100!)
 ⚡ Швидка відповідь за 2-3 години
 
-💝 **Любовний розклад** - 280 грн
+💝 **Любовний розклад** - 280 грн (замість 350!)
 💕 Детальний аналіз стосунків
 
-🎯 **"Про себе"** - 450 грн  
+🎯 **"Про себе"** - 450 грн (замість 500!)
 🌟 6 питань для самопізнання
 
-⭐ **Персональна матриця** - 570 грн
+⭐ **Персональна матриця** - 570 грн (замість 650!)
 🔮 Повний аналіз особистості
 
-🎁 **БОНУСИ:**
-• Новим клієнтам -30% 
-• За підписку в Instagram - безкоштовний міні-розклад
+🎁 **ЕКСКЛЮЗИВНО ДЛЯ БОТА:**
+• Знижки до 30% на всі послуги
+• Швидке оформлення замовлення
+• Пріоритетне обслуговування
 
-⏰ **Акція діє обмежений час!**`;
+⏰ **Акція діє тільки через бот!**`;
 
     await bot.sendMessage(chatId, pricesMessage, {
         parse_mode: 'Markdown',
         reply_markup: {
             inline_keyboard: [
-                [{ text: '🛒 Замовити зі знижкою', url: 'https://theglamstyle.com.ua' }],
-                [{ text: '🤖 Замовити в боті', url: 'https://t.me/MiaxiaTaro_bot' }]
+                [{ text: '⚡ Швидке замовлення', callback_data: 'quick_order' }],
+                [{ text: '🌐 Сайт (без знижок)', url: 'https://theglamstyle.com.ua' }]
             ]
         }
     });
 }
 
-// Про MiaxiaLip
 async function handleAbout(chatId) {
     const aboutMessage = `💎 **ПРО MIAXIALIP**
 
@@ -693,69 +843,68 @@ async function handleAbout(chatId) {
             inline_keyboard: [
                 [{ text: '📱 Instagram', url: 'https://instagram.com/miaxialip' }],
                 [{ text: '🌐 Сайт', url: 'https://theglamstyle.com.ua' }],
-                [{ text: '📞 Замовити консультацію', url: 'https://t.me/MiaxiaTaro_bot' }]
+                [{ text: '⚡ Замовити консультацію', callback_data: 'service_individual' }]
             ]
         }
     });
 }
 
-// Допоміжні функції
-function getZodiacName(key) {
-    const mapping = {
-        'aries': 'овен', 'taurus': 'телець', 'gemini': 'близнюки',
-        'cancer': 'рак', 'leo': 'лев', 'virgo': 'діва',
-        'libra': 'терези', 'scorpio': 'скорпіон', 'sagittarius': 'стрілець',
-        'capricorn': 'козеріг', 'aquarius': 'водолій', 'pisces': 'риби'
-    };
-    return mapping[key] || '';
-}
-
-function generateHoroscope(sign) {
-    const horoscopes = [
-        "Сьогодні зірки радять бути відкритими до нових можливостей",
-        "День сприятливий для важливих рішень та змін",
-        "Зосередьтесь на внутрішній гармонії та спокої",
-        "Час для творчості та самовираження",
-        "Довіряйте своїй інтуїції - вона не підведе"
-    ];
+// Звіт по замовленнях
+async function generateOrdersReport() {
+    const ordersArray = Array.from(orders.values());
+    const recentOrders = ordersArray.filter(order => {
+        const orderDate = new Date(order.timestamp);
+        const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+        return orderDate > threeDaysAgo;
+    });
     
-    const horoscope = horoscopes[Math.floor(Math.random() * horoscopes.length)];
+    let report = `📋 **ЗВІТ ПО ЗАМОВЛЕННЯХ**
+
+📊 **Загальна статистика:**
+• Всього замовлень: ${ordersArray.length}
+• За останні 3 дні: ${recentOrders.length}
+
+💰 **Останні замовлення:**\n`;
     
-    return `${sign.emoji} **${sign.name.toUpperCase()}** (${sign.dates})
-
-🌟 **Гороскоп на сьогодні:**
-${horoscope}
-
-💫 **Щасливий колір:** ${getRandomColor()}
-🔢 **Щасливе число:** ${Math.floor(Math.random() * 9) + 1}
-
-✨ *Хочете персональний гороскоп? Замовте консультацію!*`;
+    recentOrders.slice(-5).forEach(order => {
+        const date = new Date(order.timestamp).toLocaleDateString('uk-UA');
+        report += `• ${order.name} - ${order.service} (${order.price} грн) - ${date}\n`;
+    });
+    
+    return report;
 }
 
-function getRandomColor() {
-    const colors = ['🔴 Червоний', '🟠 Помаранчевий', '🟡 Жовтий', '🟢 Зелений', '🔵 Синій', '🟣 Фіолетовий'];
-    return colors[Math.floor(Math.random() * colors.length)];
-}
-
-// Статистика лідогенерації
+// Статистика
 async function getStatistics() {
     const totalUsers = users.size;
     const totalLeads = leads.size;
+    const totalOrders = orders.size;
+    
     const activeToday = Array.from(users.values()).filter(user => {
         const lastActivity = new Date(user.lastActivity);
         const today = new Date();
         return lastActivity.toDateString() === today.toDateString();
     }).length;
     
+    const ordersToday = Array.from(orders.values()).filter(order => {
+        const orderDate = new Date(order.timestamp);
+        const today = new Date();
+        return orderDate.toDateString() === today.toDateString();
+    }).length;
+    
     const hotLeads = Array.from(leads.values()).filter(lead => lead.readingsCount >= 3).length;
     const conversionRate = totalUsers > 0 ? ((totalLeads / totalUsers) * 100).toFixed(1) : 0;
+    const orderConversionRate = totalLeads > 0 ? ((totalOrders / totalLeads) * 100).toFixed(1) : 0;
     
     return {
         totalUsers,
         totalLeads,
+        totalOrders,
         hotLeads,
         conversionRate,
+        orderConversionRate,
         activeToday,
+        ordersToday,
         newToday: Array.from(users.values()).filter(user => {
             const joinDate = new Date(user.joinDate);
             const today = new Date();
@@ -764,63 +913,6 @@ async function getStatistics() {
     };
 }
 
-// Звіт по лідах
-async function generateLeadsReport() {
-    const leadsArray = Array.from(leads.values());
-    const hotLeads = leadsArray.filter(lead => lead.readingsCount >= 3);
-    const recentLeads = leadsArray.filter(lead => {
-        const leadDate = new Date(lead.timestamp);
-        const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
-        return leadDate > threeDaysAgo;
-    });
-    
-    let report = `🎯 **ЗВІТ ПО ЛІДАХ**
-
-🔥 **Гарячі ліди (3+ розкладів):**\n`;
-    
-    hotLeads.slice(0, 5).forEach(lead => {
-        report += `• ${lead.firstName} (@${lead.username}) - ${lead.readingsCount} розкладів\n`;
-    });
-    
-    report += `\n📈 **Останні 3 дні:**\n`;
-    recentLeads.slice(0, 5).forEach(lead => {
-        report += `• ${lead.firstName} - ${lead.action}\n`;
-    });
-    
-    report += `\n📊 **Загальна статистика:**
-• Всього лідів: ${leadsArray.length}
-• Гарячих лідів: ${hotLeads.length}
-• За останні 3 дні: ${recentLeads.length}`;
-    
-    return report;
-}
-
-// Щоденна статистика для адміна (21:00)
-cron.schedule('0 21 * * *', async () => {
-    const stats = await getStatistics();
-    const gptStats = getChatGPTStats();
-    
-    const statsMessage = `📊 **ЩОДЕННА СТАТИСТИКА ЛІДОГЕНЕРАЦІЇ**
-
-👥 **Користувачі:**
-• Всього: ${stats.totalUsers}
-• Активні сьогодні: ${stats.activeToday}  
-• Нові сьогодні: ${stats.newToday}
-
-🎯 **Ліди:**
-• Всього лідів: ${stats.totalLeads}
-• Гарячі ліди: ${stats.hotLeads}
-• Конверсія: ${stats.conversionRate}%
-
-🤖 **ChatGPT:**
-• Успішність: ${gptStats.successRate}%
-• Статус: ${process.env.OPENAI_API_KEY ? '✅ Активний' : '❌ Неактивний'}
-
-📈 Зростання: ${stats.newToday > 0 ? '+' : ''}${stats.newToday} користувачів`;
-
-    await bot.sendMessage(ADMIN_CHAT_ID, statsMessage, { parse_mode: 'Markdown' });
-});
-
 // Запуск бота
 async function startBot() {
     await loadUserData();
@@ -828,37 +920,51 @@ async function startBot() {
     // Запуск ChatGPT автопостів
     scheduleSmartPosts(bot, CHANNEL_ID);
     
-    console.log('🤖 Бот лідогенерації MiaxiaLip запущено!');
+    console.log('🤖 Повний цикл бота MiaxiaLip запущено!');
+    console.log('🎯 Лідогенерація + Прийом замовлень активні');
     console.log('🧠 ChatGPT контент для каналу активний');
-    console.log('🎯 Система збору лідів активна');
     console.log('📊 Статистика збирається');
     
-    // Перевірка ChatGPT
     const hasOpenAI = process.env.OPENAI_API_KEY ? '✅' : '❌';
     console.log(`🔑 ChatGPT API: ${hasOpenAI}`);
     
-    // Повідомлення адміну про запуск
-    await bot.sendMessage(ADMIN_CHAT_ID, `🚀 Бот лідогенерації запущено!
+    await bot.sendMessage(ADMIN_CHAT_ID, `🚀 Повний цикл бота запущено!
 
-🎯 **Роль:** Збір лідів + контент для каналу
-✅ Всі системи працюють
-🧠 ChatGPT: ${hasOpenAI}
-📅 Розумні пости в канал активні
+🎯 **Функції:**
+• ✅ Лідогенерація (безкоштовні розклади)
+• ✅ Прийом замовлень (інтеграція з системою)
+• ✅ ChatGPT контент для каналу
+• ✅ Аналітика лідів та замовлень
 
 📊 **Поточна статистика:**
 • Користувачів: ${users.size}
 • Лідів: ${leads.size}
+• Замовлень: ${orders.size}
 
-🔗 **Інтеграція:**
-• Канал: ${CHANNEL_ID}
-• Замовлення → @MiaxiaTaro_bot
-• Сайт: theglamstyle.com.ua
+🔗 **Повний цикл:**
+Канал → Бот → Безкоштовний розклад → Замовлення → Сповіщення адміну
 
 Команди:
-/admin - панель лідогенерації
-/test_gpt - тест ChatGPT
-/post_now - пост в канал`);
+/admin - повна панель керування`);
 }
+
+// Щоденна статистика (21:00)
+cron.schedule('0 21 * * *', async () => {
+    const stats = await getStatistics();
+    const gptStats = getChatGPTStats();
+    
+    const statsMessage = `📊 **ЩОДЕННА СТАТИСТИКА ПОВНОГО ЦИКЛУ**
+
+👥 **Користувачі:** ${stats.totalUsers} (+${stats.newToday})
+🎯 **Ліди:** ${stats.totalLeads} (конверсія ${stats.conversionRate}%)
+📋 **Замовлення:** ${stats.totalOrders} (+${stats.ordersToday}) (конверсія ${stats.orderConversionRate}%)
+🔥 **Гарячі ліди:** ${stats.hotLeads}
+
+🤖 **ChatGPT:** ${gptStats.successRate}% успішність
+⚡ **Ефективність:** повний цикл працює`;
+
+    await bot.sendMessage(ADMIN_CHAT_ID, statsMessage, { parse_mode: 'Markdown' });
+});
 
 // Обробка помилок
 process.on('unhandledRejection', (error) => {
@@ -866,11 +972,10 @@ process.on('unhandledRejection', (error) => {
 });
 
 process.on('SIGINT', async () => {
-    console.log('🛑 Зупинка бота лідогенерації...');
+    console.log('🛑 Зупинка повного циклу бота...');
     await saveUserData();
-    await bot.sendMessage(ADMIN_CHAT_ID, '⏹️ Бот лідогенерації зупинено');
+    await bot.sendMessage(ADMIN_CHAT_ID, '⏹️ Повний цикл бота зупинено');
     process.exit(0);
 });
 
-// Запуск
 startBot();
