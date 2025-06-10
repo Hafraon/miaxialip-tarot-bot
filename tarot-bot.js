@@ -7,35 +7,7 @@ const cron = require('node-cron');
 const fs = require('fs').promises;
 const path = require('path');
 
-// Wrapper функція для відправки постів з обов'язковим футером
-async function sendChannelPostWithFooter(bot, channelId, text, options = {}) {
-    const textWithFooter = addMandatoryFooter(text);
-    return await bot.sendMessage(channelId, textWithFooter, options);
-}
-
-// Перевизначаємо sendSmartPost щоб завжди додавати футер
-const originalSendSmartPost = sendSmartPost;
-async function sendSmartPostWithFooter(bot, channelId) {
-    try {
-        // Спочатку генеруємо пост
-        const result = await originalSendSmartPost(bot, channelId);
-        
-        // Якщо пост не містить контактів - це помилка, виправляємо
-        if (result && typeof result === 'string' && !result.includes('theglamstyle.com.ua')) {
-            console.log('⚠️ Пост без контактів, додаю футер...');
-            const correctedPost = addMandatoryFooter(result);
-            await bot.sendMessage(channelId, correctedPost);
-            return correctedPost;
-        }
-        
-        return result;
-    } catch (error) {
-        console.error('❌ Помилка відправки поста:', error);
-        return false;
-    }
-}
-
-// Підключення ChatGPT інтеграції (безпечно)
+// Безпечне підключення ChatGPT інтеграції
 let chatGPTIntegration = null;
 try {
     chatGPTIntegration = require('./chatgpt-integration');
@@ -49,6 +21,86 @@ try {
         sendSmartPost: () => Promise.resolve(false),
         getChatGPTStats: () => ({ successRate: 0 })
     };
+}
+
+const { 
+    scheduleSmartPosts, 
+    testChatGPT, 
+    sendSmartPost,
+    getChatGPTStats 
+} = chatGPTIntegration;
+
+// Функція додавання обов'язкового футера до постів
+function addMandatoryFooter(postText) {
+    if (!postText || typeof postText !== 'string') return postText;
+    
+    const footer = `
+
+🔮 Записатися на консультацію:
+🌐 theglamstyle.com.ua
+📱 Instagram: @miaxialip
+🤖 Telegram бот: @miaxialiptarotbot`;
+    
+    // Перевіряємо чи вже є футер
+    if (!postText.includes('theglamstyle.com.ua')) {
+        return postText + footer;
+    }
+    return postText;
+}
+
+// Безпечна обгортка для відправки постів з автоматичним футером
+async function sendSmartPostWithFooter(bot, channelId) {
+    try {
+        if (!sendSmartPost) {
+            console.log('⚠️ ChatGPT недоступний для постів');
+            return false;
+        }
+        
+        const result = await sendSmartPost(bot, channelId);
+        
+        // Якщо пост не містить контактів - додаємо футер
+        if (result && typeof result === 'string' && !result.includes('theglamstyle.com.ua')) {
+            console.log('⚠️ Пост без контактів, додаю обов\'язковий футер...');
+            const correctedPost = addMandatoryFooter(result);
+            await bot.sendMessage(channelId, correctedPost);
+            return correctedPost;
+        }
+        
+        return result;
+    } catch (error) {
+        console.error('❌ Помилка відправки поста:', error);
+        return false;
+    }
+}
+
+// Безпечна обгортка для планування постів
+function scheduleSmartPostsWithFooter(bot, channelId) {
+    try {
+        if (!scheduleSmartPosts) {
+            console.log('⚠️ ChatGPT автопости недоступні');
+            return;
+        }
+        
+        // Перевизначаємо функцію sendSmartPost глобально для cron завдань
+        if (chatGPTIntegration && chatGPTIntegration.sendSmartPost) {
+            const originalSendSmartPost = chatGPTIntegration.sendSmartPost;
+            chatGPTIntegration.sendSmartPost = async (bot, channelId) => {
+                const result = await originalSendSmartPost(bot, channelId);
+                if (result && typeof result === 'string' && !result.includes('theglamstyle.com.ua')) {
+                    console.log('⚠️ Автопост без контактів, додаю футер...');
+                    const correctedPost = addMandatoryFooter(result);
+                    await bot.sendMessage(channelId, correctedPost);
+                    return correctedPost;
+                }
+                return result;
+            };
+        }
+        
+        scheduleSmartPosts(bot, channelId);
+        console.log('✅ ChatGPT автопости з обов\'язковими контактами активні');
+    } catch (error) {
+        console.error('❌ Помилка планування автопостів:', error);
+    }
 }
 
 // Завантаження конфігурації
@@ -179,7 +231,8 @@ function collectLead(chatId, user, action) {
     // Сповістити адміна про активного ліда
     if (leadData.readingsCount >= 3) {
         bot.sendMessage(ADMIN_CHAT_ID, 
-            `🔥 ГАРЯЧИЙ ЛІД!\n\n👤 ${leadData.firstName} (@${leadData.username})\n📊 Розкладів: ${leadData.readingsCount}\n💡 Готовий до замовлення!`);
+            `🔥 ГАРЯЧИЙ ЛІД!\n\n👤 ${leadData.firstName} (@${leadData.username})\n📊 Розкладів: ${leadData.readingsCount}\n💡 Готовий до замовлення!`)
+            .catch(err => console.log('⚠️ Помилка сповіщення про гарячий лід:', err.message));
     }
     
     saveUserData();
@@ -248,7 +301,7 @@ const adminKeyboard = {
             ],
             [
                 { text: '📋 Замовлення', callback_data: 'admin_orders' },
-                { text: '🔄 Перезапуск', callback_data: 'admin_restart' }
+                { text: '🔄 Оновити дані', callback_data: 'admin_restart' }
             ]
         ]
     }
@@ -256,20 +309,21 @@ const adminKeyboard = {
 
 // Обробники команд
 bot.onText(/\/start/, async (msg) => {
-    const chatId = msg.chat.id;
-    const firstName = msg.from.first_name || 'Дорогий друже';
-    
-    // Зберігаємо користувача
-    users.set(chatId, {
-        firstName: firstName,
-        username: msg.from.username || '',
-        joinDate: new Date().toISOString(),
-        lastActivity: new Date().toISOString()
-    });
-    
-    await saveUserData();
-    
-    const welcomeMessage = `🌟 Привіт, ${firstName}! 
+    try {
+        const chatId = msg.chat.id;
+        const firstName = msg.from.first_name || 'Дорогий друже';
+        
+        // Зберігаємо користувача
+        users.set(chatId, {
+            firstName: firstName,
+            username: msg.from.username || '',
+            joinDate: new Date().toISOString(),
+            lastActivity: new Date().toISOString()
+        });
+        
+        await saveUserData();
+        
+        const welcomeMessage = `🌟 Привіт, ${firstName}! 
 
 Ласкаво прошу до світу Таро з MiaxiaLip! 🔮
 
@@ -284,137 +338,164 @@ bot.onText(/\/start/, async (msg) => {
 
 💫 Оберіть опцію з меню або напишіть ваше питання!`;
 
-    await bot.sendMessage(chatId, welcomeMessage, mainKeyboard);
-    
-    // Сповіщення адміну про нового користувача
-    await bot.sendMessage(ADMIN_CHAT_ID, `🆕 Новий користувач: ${firstName} (@${msg.from.username || 'без username'})`);
+        await bot.sendMessage(chatId, welcomeMessage, mainKeyboard);
+        
+        // Сповіщення адміну про нового користувача
+        try {
+            await bot.sendMessage(ADMIN_CHAT_ID, `🆕 Новий користувач: ${firstName} (@${msg.from.username || 'без username'})`);
+        } catch (error) {
+            console.log('⚠️ Не вдалося сповістити адміна:', error.message);
+        }
+    } catch (error) {
+        console.error('❌ Помилка в /start:', error);
+    }
 });
 
 // Адмін команди
 bot.onText(/\/admin/, async (msg) => {
-    if (msg.chat.id.toString() === ADMIN_CHAT_ID) {
-        await bot.sendMessage(ADMIN_CHAT_ID, '👑 Панель лідогенерації + замовлень:', adminKeyboard);
+    try {
+        if (msg.chat.id.toString() === ADMIN_CHAT_ID) {
+            await bot.sendMessage(ADMIN_CHAT_ID, '👑 Панель лідогенерації + замовлень:', adminKeyboard);
+        }
+    } catch (error) {
+        console.error('❌ Помилка в /admin:', error);
     }
 });
 
 bot.on('message', async (msg) => {
-    const chatId = msg.chat.id;
-    const text = msg.text;
-    
-    // Оновлюємо активність користувача
-    if (users.has(chatId)) {
-        const user = users.get(chatId);
-        user.lastActivity = new Date().toISOString();
-        users.set(chatId, user);
-    }
-    
-    // Перевіряємо чи користувач в процесі замовлення
-    if (userSessions.has(chatId) && userSessions.get(chatId).orderInProgress) {
-        await handleOrderStep(chatId, text);
-        return;
-    }
-    
-    switch (text) {
-        case '🔮 Безкоштовний розклад':
-            await handleFreeReading(chatId);
-            break;
-            
-        case '💝 Любовний прогноз':
-            await handleLoveReading(chatId);
-            break;
-            
-        case '⭐ Гороскоп на день':
-            await bot.sendMessage(chatId, '🌟 Функція гороскопу буде додана незабаром!');
-            break;
-            
-        case '🎯 Задати питання':
-            await handleQuestionPrompt(chatId);
-            break;
-            
-        case '📞 Замовити консультацію':
-            await handleConsultationRedirect(chatId);
-            break;
-            
-        case '⚡ Швидке замовлення':
-            await startQuickOrder(chatId);
-            break;
-            
-        case '💎 Про MiaxiaLip':
-            await handleAbout(chatId);
-            break;
-            
-        case '📺 Наш канал':
-            await handleChannelPromo(chatId);
-            break;
-            
-        case '🎁 Спеціальні ціни':
-            await handleSpecialPrices(chatId);
-            break;
-            
-        default:
-            if (text && !text.startsWith('/')) {
+    try {
+        const chatId = msg.chat.id;
+        const text = msg.text;
+        
+        // Ігноруємо команди
+        if (!text || text.startsWith('/')) return;
+        
+        // Оновлюємо активність користувача
+        if (users.has(chatId)) {
+            const user = users.get(chatId);
+            user.lastActivity = new Date().toISOString();
+            users.set(chatId, user);
+        }
+        
+        // Перевіряємо чи користувач в процесі замовлення
+        if (userSessions.has(chatId) && userSessions.get(chatId).orderInProgress) {
+            await handleOrderStep(chatId, text);
+            return;
+        }
+        
+        switch (text) {
+            case '🔮 Безкоштовний розклад':
+                await handleFreeReading(chatId);
+                break;
+                
+            case '💝 Любовний прогноз':
+                await handleLoveReading(chatId);
+                break;
+                
+            case '⭐ Гороскоп на день':
+                await bot.sendMessage(chatId, '🌟 Функція гороскопу буде додана незабаром!');
+                break;
+                
+            case '🎯 Задати питання':
+                await handleQuestionPrompt(chatId);
+                break;
+                
+            case '📞 Замовити консультацію':
+                await handleConsultationRedirect(chatId);
+                break;
+                
+            case '⚡ Швидке замовлення':
+                await startQuickOrder(chatId);
+                break;
+                
+            case '💎 Про MiaxiaLip':
+                await handleAbout(chatId);
+                break;
+                
+            case '📺 Наш канал':
+                await handleChannelPromo(chatId);
+                break;
+                
+            case '🎁 Спеціальні ціни':
+                await handleSpecialPrices(chatId);
+                break;
+                
+            default:
                 await handleUserQuestion(chatId, text);
-            }
+        }
+    } catch (error) {
+        console.error('❌ Помилка обробки повідомлення:', error);
     }
 });
 
 // НОВА ФУНКЦІЯ: ШВИДКЕ ЗАМОВЛЕННЯ
 async function startQuickOrder(chatId) {
-    const quickOrderMessage = `⚡ **ШВИДКЕ ЗАМОВЛЕННЯ**
+    try {
+        const quickOrderMessage = `⚡ **ШВИДКЕ ЗАМОВЛЕННЯ**
 
 🔮 Оберіть послугу, яка вас цікавить:
 
 💎 Всі ціни зі знижкою для користувачів бота!`;
 
-    await bot.sendMessage(chatId, quickOrderMessage, {
-        parse_mode: 'Markdown',
-        ...servicesKeyboard
-    });
-    
-    // Збираємо лід
-    if (users.has(chatId)) {
-        collectLead(chatId, users.get(chatId), 'quick_order_started');
+        await bot.sendMessage(chatId, quickOrderMessage, {
+            parse_mode: 'Markdown',
+            ...servicesKeyboard
+        });
+        
+        // Збираємо лід
+        if (users.has(chatId)) {
+            collectLead(chatId, users.get(chatId), 'quick_order_started');
+        }
+    } catch (error) {
+        console.error('❌ Помилка швидкого замовлення:', error);
     }
 }
 
 // Обробка кроків замовлення
 async function handleOrderStep(chatId, text) {
-    const session = userSessions.get(chatId);
-    const orderData = session.orderData;
-    
-    switch (session.orderState) {
-        case ORDER_STATES.WAITING_NAME:
-            orderData.name = text.trim();
-            session.orderState = ORDER_STATES.WAITING_PHONE;
-            await bot.sendMessage(chatId, '📱 **Вкажіть ваш номер телефону:**\n\nНаприклад: +380123456789', {parse_mode: 'Markdown'});
-            break;
-            
-        case ORDER_STATES.WAITING_PHONE:
-            orderData.phone = text.trim();
-            session.orderState = ORDER_STATES.WAITING_INSTAGRAM;
-            await bot.sendMessage(chatId, '📷 **Вкажіть ваш Instagram (ОБОВ\'ЯЗКОВО):**\n\nНаприклад: @username', {parse_mode: 'Markdown'});
-            break;
-            
-        case ORDER_STATES.WAITING_INSTAGRAM:
-            const instagramInput = text.trim();
-            if (!instagramInput || instagramInput.toLowerCase() === 'немає' || instagramInput.length < 2) {
-                await bot.sendMessage(chatId, '❌ **Instagram обов\'язковий для заповнення!**\n\nБудь ласка, вкажіть ваш Instagram нікнейм (наприклад: @username):', {parse_mode: 'Markdown'});
-                return; // Не переходимо до наступного кроку
-            }
-            orderData.instagram = instagramInput;
-            session.orderState = ORDER_STATES.CONFIRMING;
-            await showOrderConfirmation(chatId, orderData);
-            break;
+    try {
+        const session = userSessions.get(chatId);
+        if (!session) return;
+        
+        const orderData = session.orderData;
+        
+        switch (session.orderState) {
+            case ORDER_STATES.WAITING_NAME:
+                orderData.name = text.trim();
+                session.orderState = ORDER_STATES.WAITING_PHONE;
+                await bot.sendMessage(chatId, '📱 **Вкажіть ваш номер телефону:**\n\nНаприклад: +380123456789', {parse_mode: 'Markdown'});
+                break;
+                
+            case ORDER_STATES.WAITING_PHONE:
+                orderData.phone = text.trim();
+                session.orderState = ORDER_STATES.WAITING_INSTAGRAM;
+                await bot.sendMessage(chatId, '📷 **Вкажіть ваш Instagram (ОБОВ\'ЯЗКОВО):**\n\nНаприклад: @username', {parse_mode: 'Markdown'});
+                break;
+                
+            case ORDER_STATES.WAITING_INSTAGRAM:
+                const instagramInput = text.trim();
+                if (!instagramInput || instagramInput.toLowerCase() === 'немає' || instagramInput.length < 2) {
+                    await bot.sendMessage(chatId, '❌ **Instagram обов\'язковий для заповнення!**\n\nБудь ласка, вкажіть ваш Instagram нікнейм (наприклад: @username):', {parse_mode: 'Markdown'});
+                    return; // Не переходимо до наступного кроку
+                }
+                orderData.instagram = instagramInput;
+                session.orderState = ORDER_STATES.CONFIRMING;
+                await showOrderConfirmation(chatId, orderData);
+                break;
+        }
+        
+        userSessions.set(chatId, session);
+    } catch (error) {
+        console.error('❌ Помилка в handleOrderStep:', error);
     }
-    
-    userSessions.set(chatId, session);
 }
 
 // Показ підтвердження замовлення
 async function showOrderConfirmation(chatId, orderData) {
-    const service = SERVICES[orderData.serviceKey];
-    
-    const confirmationMessage = `✅ **ПІДТВЕРДЖЕННЯ ЗАМОВЛЕННЯ**
+    try {
+        const service = SERVICES[orderData.serviceKey];
+        
+        const confirmationMessage = `✅ **ПІДТВЕРДЖЕННЯ ЗАМОВЛЕННЯ**
 
 👤 **Ім'я:** ${orderData.name}
 📱 **Телефон:** ${orderData.phone}
@@ -430,49 +511,55 @@ async function showOrderConfirmation(chatId, orderData) {
 
 Підтверджуєте замовлення?`;
 
-    await bot.sendMessage(chatId, confirmationMessage, {
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: [
-                [
-                    { text: '✅ Підтверджую', callback_data: 'confirm_order' },
-                    { text: '❌ Скасувати', callback_data: 'cancel_order' }
-                ],
-                [
-                    { text: '✏️ Редагувати', callback_data: 'edit_order' }
+        await bot.sendMessage(chatId, confirmationMessage, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '✅ Підтверджую', callback_data: 'confirm_order' },
+                        { text: '❌ Скасувати', callback_data: 'cancel_order' }
+                    ],
+                    [
+                        { text: '✏️ Редагувати', callback_data: 'edit_order' }
+                    ]
                 ]
-            ]
-        }
-    });
+            }
+        });
+    } catch (error) {
+        console.error('❌ Помилка показу підтвердження:', error);
+    }
 }
 
 // Підтвердження замовлення
 async function confirmOrder(chatId) {
-    const session = userSessions.get(chatId);
-    const orderData = session.orderData;
-    const service = SERVICES[orderData.serviceKey];
-    
-    // Генеруємо ID замовлення
-    const orderId = Date.now().toString();
-    
-    // Зберігаємо замовлення
-    const orderRecord = {
-        id: orderId,
-        chatId: chatId,
-        name: orderData.name,
-        phone: orderData.phone,
-        service: service.name,
-        price: service.price,
-        instagram: orderData.instagram,
-        status: 'new',
-        timestamp: new Date().toISOString(),
-        source: 'Telegram бот (лідогенерація)'
-    };
-    
-    orders.set(orderId, orderRecord);
-    
-    // Відправляємо замовлення адміну (в форматі як з сайту)
-    const adminNotification = `🔔 **Нове замовлення з бота лідогенерації!**
+    try {
+        const session = userSessions.get(chatId);
+        if (!session) return;
+        
+        const orderData = session.orderData;
+        const service = SERVICES[orderData.serviceKey];
+        
+        // Генеруємо ID замовлення
+        const orderId = Date.now().toString();
+        
+        // Зберігаємо замовлення
+        const orderRecord = {
+            id: orderId,
+            chatId: chatId,
+            name: orderData.name,
+            phone: orderData.phone,
+            service: service.name,
+            price: service.price,
+            instagram: orderData.instagram,
+            status: 'new',
+            timestamp: new Date().toISOString(),
+            source: 'Telegram бот (лідогенерація)'
+        };
+        
+        orders.set(orderId, orderRecord);
+        
+        // Відправляємо замовлення адміну (в форматі як з сайту)
+        const adminNotification = `🔔 **Нове замовлення з бота лідогенерації!**
 
 👤 **Ім'я:** ${orderData.name}
 📱 **Телефон:** ${orderData.phone}  
@@ -486,31 +573,44 @@ async function confirmOrder(chatId) {
 
 📞 **Дії:** Зв'яжіться з клієнтом для уточнення деталей`;
 
-    await bot.sendMessage(ADMIN_CHAT_ID, adminNotification, {parse_mode: 'Markdown'});
-    
-    // ВІДПРАВЛЯЄМО в старий бот @MiaxiaTaro_bot
-    const oldBotFormat = `🔔 Нове замовлення з сайту MiaxiaLip!
+        try {
+            await bot.sendMessage(ADMIN_CHAT_ID, adminNotification, {parse_mode: 'Markdown'});
+        } catch (error) {
+            console.error('❌ Помилка сповіщення адміна:', error);
+        }
+        
+        // ВІДПРАВЛЯЄМО в старий бот @MiaxiaTaro_bot з обов'язковими контактами
+        const oldBotFormat = `🔔 Нове замовлення з сайту MiaxiaLip!
 
 👤 Ім'я: ${orderData.name}
 📱 Телефон: ${orderData.phone}
 🔮 Послуга: ${service.name}
 📷 Instagram: ${orderData.instagram}
 
+🔮 Записатися на консультацію:
+🌐 theglamstyle.com.ua
+📱 Instagram: @miaxialip
+🤖 Telegram бот: @miaxialiptarotbot
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🌐 Сайт: theglamstyle.com.ua
 📅 Дата подачі: ${new Date().toLocaleString('uk-UA')}`;
-    
-    try {
-        await bot.sendMessage(OLD_BOT_CHAT_ID, oldBotFormat);
-        console.log('✅ Замовлення відправлено в старий бот @MiaxiaTaro_bot');
-    } catch (error) {
-        console.error('❌ Помилка відправки в старий бот:', error);
-        // Альтернативно відправляємо адміну
-        await bot.sendMessage(ADMIN_CHAT_ID, `⚠️ Не вдалося відправити замовлення в @MiaxiaTaro_bot:\n\n${oldBotFormat}`);
-    }
-    
-    // Повідомляємо користувача
-    await bot.sendMessage(chatId, `🎉 **ЗАМОВЛЕННЯ ПІДТВЕРДЖЕНО!**
+        
+        try {
+            await bot.sendMessage(OLD_BOT_CHAT_ID, oldBotFormat);
+            console.log('✅ Замовлення відправлено в старий бот @MiaxiaTaro_bot');
+        } catch (error) {
+            console.error('❌ Помилка відправки в старий бот:', error);
+            // Альтернативно відправляємо адміну
+            try {
+                await bot.sendMessage(ADMIN_CHAT_ID, `⚠️ Не вдалося відправити замовлення в @MiaxiaTaro_bot:\n\n${oldBotFormat}`);
+            } catch (e) {
+                console.error('❌ Критична помилка сповіщення:', e);
+            }
+        }
+        
+        // Повідомляємо користувача
+        await bot.sendMessage(chatId, `🎉 **ЗАМОВЛЕННЯ ПІДТВЕРДЖЕНО!**
 
 ✅ Ваше замовлення №${orderId} прийнято
 
@@ -523,19 +623,22 @@ async function confirmOrder(chatId) {
 🙏 Дякуємо за довіру! Незабаром ви отримаєте відповіді на свої питання!
 
 📺 Підписуйтесь на наш канал: @MiaxiaLipTarot`, {
-        parse_mode: 'Markdown',
-        reply_markup: mainKeyboard.reply_markup
-    });
-    
-    // Очищаємо сесію
-    userSessions.delete(chatId);
-    
-    // Зберігаємо дані
-    await saveUserData();
-    
-    // Збираємо лід як конверсію
-    if (users.has(chatId)) {
-        collectLead(chatId, users.get(chatId), 'order_completed');
+            parse_mode: 'Markdown',
+            reply_markup: mainKeyboard.reply_markup
+        });
+        
+        // Очищаємо сесію
+        userSessions.delete(chatId);
+        
+        // Зберігаємо дані
+        await saveUserData();
+        
+        // Збираємо лід як конверсію
+        if (users.has(chatId)) {
+            collectLead(chatId, users.get(chatId), 'order_completed');
+        }
+    } catch (error) {
+        console.error('❌ Помилка підтвердження замовлення:', error);
     }
 }
 
@@ -572,157 +675,157 @@ async function generateLeadsReport() {
 
 // Обробка callback кнопок
 bot.on('callback_query', async (callbackQuery) => {
-    const message = callbackQuery.message;
-    const data = callbackQuery.data;
-    const chatId = message.chat.id;
-    
-    // Сервіси
-    if (data.startsWith('service_')) {
-        const serviceKey = data.replace('service_', '');
-        const service = SERVICES[serviceKey];
+    try {
+        const message = callbackQuery.message;
+        const data = callbackQuery.data;
+        const chatId = message.chat.id;
         
-        if (service) {
-            // Початок процесу замовлення
-            const orderData = {
-                serviceKey: serviceKey,
-                name: '',
-                phone: '',
-                instagram: ''
-            };
+        // Сервіси
+        if (data.startsWith('service_')) {
+            const serviceKey = data.replace('service_', '');
+            const service = SERVICES[serviceKey];
             
-            userSessions.set(chatId, {
-                orderInProgress: true,
-                orderState: ORDER_STATES.WAITING_NAME,
-                orderData: orderData
-            });
-            
-            await bot.editMessageText(`📝 **ЗАМОВЛЕННЯ: ${service.name.toUpperCase()}**
+            if (service) {
+                // Початок процесу замовлення
+                const orderData = {
+                    serviceKey: serviceKey,
+                    name: '',
+                    phone: '',
+                    instagram: ''
+                };
+                
+                userSessions.set(chatId, {
+                    orderInProgress: true,
+                    orderState: ORDER_STATES.WAITING_NAME,
+                    orderData: orderData
+                });
+                
+                await bot.editMessageText(`📝 **ЗАМОВЛЕННЯ: ${service.name.toUpperCase()}**
 
 💰 **Ціна:** ${service.price} грн ${service.originalPrice > service.price ? `(зі знижкою з ${service.originalPrice} грн)` : ''}
 
 👤 **Вкажіть ваше ім'я:**`, {
+                    chat_id: chatId,
+                    message_id: message.message_id,
+                    parse_mode: 'Markdown'
+                });
+            }
+        }
+        
+        // Підтвердження замовлення
+        if (data === 'confirm_order') {
+            await confirmOrder(chatId);
+        }
+        
+        if (data === 'cancel_order') {
+            userSessions.delete(chatId);
+            await bot.editMessageText('❌ Замовлення скасовано', {
                 chat_id: chatId,
-                message_id: message.message_id,
-                parse_mode: 'Markdown'
+                message_id: message.message_id
             });
         }
-    }
-    
-    // Підтвердження замовлення
-    if (data === 'confirm_order') {
-        await confirmOrder(chatId);
-    }
-    
-    if (data === 'cancel_order') {
-        userSessions.delete(chatId);
-        await bot.editMessageText('❌ Замовлення скасовано', {
-            chat_id: chatId,
-            message_id: message.message_id
-        });
-    }
-    
-    if (data === 'edit_order') {
-        // Перезапускаємо процес замовлення
-        const session = userSessions.get(chatId);
-        if (session) {
-            session.orderState = ORDER_STATES.WAITING_NAME;
-            userSessions.set(chatId, session);
-            
-            await bot.editMessageText(`✏️ **РЕДАГУВАННЯ ЗАМОВЛЕННЯ**
+        
+        if (data === 'edit_order') {
+            // Перезапускаємо процес замовлення
+            const session = userSessions.get(chatId);
+            if (session) {
+                session.orderState = ORDER_STATES.WAITING_NAME;
+                userSessions.set(chatId, session);
+                
+                await bot.editMessageText(`✏️ **РЕДАГУВАННЯ ЗАМОВЛЕННЯ**
 
 👤 **Вкажіть ваше ім'я:**`, {
-                chat_id: chatId,
-                message_id: message.message_id,
-                parse_mode: 'Markdown'
-            });
+                    chat_id: chatId,
+                    message_id: message.message_id,
+                    parse_mode: 'Markdown'
+                });
+            }
         }
-    }
-    
-    // Адмін кнопки
-    if (data.startsWith('admin_') && chatId.toString() === ADMIN_CHAT_ID) {
-        switch (data) {
-            case 'admin_test_gpt':
-                try {
-                    await bot.editMessageText('🧪 Тестую ChatGPT...', {
-                        chat_id: chatId,
-                        message_id: message.message_id
-                    });
+        
+        // Адмін кнопки
+        if (data.startsWith('admin_') && chatId.toString() === ADMIN_CHAT_ID) {
+            switch (data) {
+                case 'admin_test_gpt':
+                    try {
+                        await bot.editMessageText('🧪 Тестую ChatGPT...', {
+                            chat_id: chatId,
+                            message_id: message.message_id
+                        });
+                        
+                        const testResult = await testChatGPT();
+                        await bot.editMessageText(`🧪 **ТЕСТ CHATGPT**\n\n${testResult ? '✅ ChatGPT працює!' : '❌ ChatGPT недоступний!'}`, {
+                            chat_id: chatId,
+                            message_id: message.message_id,
+                            parse_mode: 'Markdown'
+                        });
+                    } catch (error) {
+                        await bot.editMessageText(`❌ **Помилка тесту ChatGPT:**\n\n${error.message}`, {
+                            chat_id: chatId,
+                            message_id: message.message_id,
+                            parse_mode: 'Markdown'
+                        });
+                    }
+                    break;
                     
-                    const testResult = await testChatGPTSafe();
-                    await bot.editMessageText(`🧪 **ТЕСТ CHATGPT**\n\n${testResult ? '✅ ChatGPT працює!' : '❌ ChatGPT недоступний!'}`, {
+                case 'admin_post_now':
+                    try {
+                        await bot.editMessageText('📝 Генерую пост з обов\'язковими контактами...', {
+                            chat_id: chatId,
+                            message_id: message.message_id
+                        });
+                        
+                        const postResult = await sendSmartPostWithFooter(bot, CHANNEL_ID);
+                        await bot.editMessageText(`📝 **ПОСТ ВІДПРАВЛЕНО**\n\n${postResult ? '✅ Пост опублікований в каналі з контактами!' : '❌ Помилка публікації або ChatGPT недоступний!'}`, {
+                            chat_id: chatId,
+                            message_id: message.message_id,
+                            parse_mode: 'Markdown'
+                        });
+                    } catch (error) {
+                        await bot.editMessageText(`❌ **Помилка публікації:**\n\n${error.message}`, {
+                            chat_id: chatId,
+                            message_id: message.message_id,
+                            parse_mode: 'Markdown'
+                        });
+                    }
+                    break;
+                    
+                case 'admin_leads':
+                    const leadsReport = await generateLeadsReport();
+                    await bot.editMessageText(leadsReport, {
                         chat_id: chatId,
                         message_id: message.message_id,
                         parse_mode: 'Markdown'
                     });
-                } catch (error) {
-                    await bot.editMessageText(`❌ **Помилка тесту ChatGPT:**\n\n${error.message}`, {
+                    break;
+                    
+                case 'admin_orders':
+                    const ordersReport = await generateOrdersReport();
+                    await bot.editMessageText(ordersReport, {
                         chat_id: chatId,
                         message_id: message.message_id,
                         parse_mode: 'Markdown'
                     });
-                }
-                break;
-                
-            case 'admin_post_now':
-                try {
-                    await bot.editMessageText('📝 Генерую пост...', {
-                        chat_id: chatId,
-                        message_id: message.message_id
-                    });
+                    break;
                     
-                    const postResult = await sendSmartPostSafe(bot, CHANNEL_ID);
-                    
-                    await bot.editMessageText(`📝 **ПОСТ ВІДПРАВЛЕНО**\n\n${postResult ? '✅ Пост опублікований в каналі з контактами!' : '❌ Помилка публікації або ChatGPT недоступний!'}`, {
-                        chat_id: chatId,
-                        message_id: message.message_id,
-                        parse_mode: 'Markdown'
-                    });
-                } catch (error) {
-                    await bot.editMessageText(`❌ **Помилка публікації:**\n\n${error.message}`, {
-                        chat_id: chatId,
-                        message_id: message.message_id,
-                        parse_mode: 'Markdown'
-                    });
-                }
-                break;
-                
-            case 'admin_leads':
-                const leadsReport = await generateLeadsReport();
-                await bot.editMessageText(leadsReport, {
-                    chat_id: chatId,
-                    message_id: message.message_id,
-                    parse_mode: 'Markdown'
-                });
-                break;
-                
-            case 'admin_orders':
-                const ordersReport = await generateOrdersReport();
-                await bot.editMessageText(ordersReport, {
-                    chat_id: chatId,
-                    message_id: message.message_id,
-                    parse_mode: 'Markdown'
-                });
-                break;
-                
-            case 'admin_restart':
-                try {
-                    await bot.editMessageText('🔄 Оновлюю дані...', {
-                        chat_id: chatId,
-                        message_id: message.message_id
-                    });
-                    
-                    // Зберігаємо всі дані
-                    await saveUserData();
-                    
-                    // Перезавантажуємо дані
-                    await loadUserData();
-                    
-                    // Очищаємо кеші та сесії
-                    userSessions.clear();
-                    
-                    const stats = await getStatistics();
-                    
-                    await bot.editMessageText(`✅ **ДАНІ ОНОВЛЕНО**
+                case 'admin_restart':
+                    try {
+                        await bot.editMessageText('🔄 Оновлюю дані...', {
+                            chat_id: chatId,
+                            message_id: message.message_id
+                        });
+                        
+                        // Зберігаємо всі дані
+                        await saveUserData();
+                        
+                        // Перезавантажуємо дані
+                        await loadUserData();
+                        
+                        // Очищаємо кеші та сесії
+                        userSessions.clear();
+                        
+                        const stats = await getStatistics();
+                        
+                        await bot.editMessageText(`✅ **ДАНІ ОНОВЛЕНО**
 
 📊 **Поточний стан:**
 • Користувачів: ${stats.totalUsers}
@@ -730,27 +833,26 @@ bot.on('callback_query', async (callbackQuery) => {
 • Замовлень: ${stats.totalOrders}
 • Активні сесії очищено
 
-⚠️ **Для повного перезапуску** використовуйте панель Railway.
-
-🔄 **Система працює стабільно!**`, {
-                        chat_id: chatId,
-                        message_id: message.message_id,
-                        parse_mode: 'Markdown'
-                    });
-                } catch (error) {
-                    await bot.editMessageText(`❌ **Помилка оновлення:**\n\n${error.message}`, {
-                        chat_id: chatId,
-                        message_id: message.message_id,
-                        parse_mode: 'Markdown'
-                    });
-                }
-                break;
-                
-            case 'admin_stats':
-                const stats = await getStatistics();
-                const gptStats = getChatGPTStatsSafe();
-                
-                const statsMessage = `📊 **СТАТИСТИКА ЛІДОГЕНЕРАЦІЇ + ЗАМОВЛЕНЬ**
+🔄 **Система працює стабільно!**
+📬 **Контакти додаються автоматично до всіх постів**`, {
+                            chat_id: chatId,
+                            message_id: message.message_id,
+                            parse_mode: 'Markdown'
+                        });
+                    } catch (error) {
+                        await bot.editMessageText(`❌ **Помилка оновлення:**\n\n${error.message}`, {
+                            chat_id: chatId,
+                            message_id: message.message_id,
+                            parse_mode: 'Markdown'
+                        });
+                    }
+                    break;
+                    
+                case 'admin_stats':
+                    const stats = await getStatistics();
+                    const gptStats = getChatGPTStats();
+                    
+                    const statsMessage = `📊 **СТАТИСТИКА ЛІДОГЕНЕРАЦІЇ + ЗАМОВЛЕНЬ**
 
 👥 **Користувачі:**
 • Всього: ${stats.totalUsers}
@@ -771,25 +873,35 @@ bot.on('callback_query', async (callbackQuery) => {
 • Успішність: ${gptStats.successRate}%
 
 ⚙️ **Система:**
-• Статус: ✅ Повний цикл (ліди → замовлення)`;
+• Статус: ✅ Повний цикл (ліди → замовлення)
+• Контакти: ✅ Автоматично додаються до постів`;
 
-                await bot.editMessageText(statsMessage, {
-                    chat_id: chatId,
-                    message_id: message.message_id,
-                    parse_mode: 'Markdown'
-                });
-                break;
+                    await bot.editMessageText(statsMessage, {
+                        chat_id: chatId,
+                        message_id: message.message_id,
+                        parse_mode: 'Markdown'
+                    });
+                    break;
+            }
+        }
+        
+        await bot.answerCallbackQuery(callbackQuery.id);
+    } catch (error) {
+        console.error('❌ Помилка callback:', error);
+        try {
+            await bot.answerCallbackQuery(callbackQuery.id);
+        } catch (e) {
+            console.error('❌ Помилка відповіді callback:', e);
         }
     }
-    
-    await bot.answerCallbackQuery(callbackQuery.id);
 });
 
 // РЕШТА ФУНКЦІЙ (безкоштовні розклади і т.д.)
 async function handleFreeReading(chatId) {
-    const cards = [getRandomCard(), getRandomCard(), getRandomCard()];
-    
-    const reading = `🔮 **БЕЗКОШТОВНИЙ РОЗКЛАД НА ДЕНЬ**
+    try {
+        const cards = [getRandomCard(), getRandomCard(), getRandomCard()];
+        
+        const reading = `🔮 **БЕЗКОШТОВНИЙ РОЗКЛАД НА ДЕНЬ**
 
 🌅 **Ранок:** ${cards[0].emoji} ${cards[0].name}
 ${cards[0].meaning}
@@ -804,27 +916,31 @@ ${cards[2].meaning}
 
 🎁 **Сподобався розклад?** Персональна консультація всього 70 грн!`;
 
-    await bot.sendMessage(chatId, reading, {
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: '⚡ Швидке замовлення - 70 грн', callback_data: 'service_individual' }],
-                [{ text: '🌐 Замовити через сайт', url: 'https://theglamstyle.com.ua' }]
-            ]
+        await bot.sendMessage(chatId, reading, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '⚡ Швидке замовлення - 70 грн', callback_data: 'service_individual' }],
+                    [{ text: '🌐 Замовити через сайт', url: 'https://theglamstyle.com.ua' }]
+                ]
+            }
+        });
+        
+        // Збираємо лід
+        if (users.has(chatId)) {
+            collectLead(chatId, users.get(chatId), 'free_reading');
         }
-    });
-    
-    // Збираємо лід
-    if (users.has(chatId)) {
-        collectLead(chatId, users.get(chatId), 'free_reading');
+    } catch (error) {
+        console.error('❌ Помилка безкоштовного розкладу:', error);
     }
 }
 
 // Інші функції залишаємо без змін...
 async function handleLoveReading(chatId) {
-    const cards = [getRandomCard(), getRandomCard()];
-    
-    const reading = `💝 **ЛЮБОВНИЙ ПРОГНОЗ**
+    try {
+        const cards = [getRandomCard(), getRandomCard()];
+        
+        const reading = `💝 **ЛЮБОВНИЙ ПРОГНОЗ**
 
 💕 **Ваш стан у любові:** ${cards[0].emoji} ${cards[0].name}
 ${cards[0].meaning}
@@ -836,25 +952,29 @@ ${cards[1].meaning}
 
 💖 **Хочете детальний любовний розклад?** Тільки 280 грн!`;
 
-    await bot.sendMessage(chatId, reading, {
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: '⚡ Замовити любовний розклад', callback_data: 'service_love' }],
-                [{ text: '🌐 Замовити через сайт', url: 'https://theglamstyle.com.ua' }]
-            ]
+        await bot.sendMessage(chatId, reading, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '⚡ Замовити любовний розклад', callback_data: 'service_love' }],
+                    [{ text: '🌐 Замовити через сайт', url: 'https://theglamstyle.com.ua' }]
+                ]
+            }
+        });
+        
+        if (users.has(chatId)) {
+            collectLead(chatId, users.get(chatId), 'love_reading');
         }
-    });
-    
-    if (users.has(chatId)) {
-        collectLead(chatId, users.get(chatId), 'love_reading');
+    } catch (error) {
+        console.error('❌ Помилка любовного прогнозу:', error);
     }
 }
 
 async function handleUserQuestion(chatId, question) {
-    const card = getRandomCard();
-    
-    const response = `🔮 **ВІДПОВІДЬ НА ВАШЕ ПИТАННЯ**
+    try {
+        const card = getRandomCard();
+        
+        const response = `🔮 **ВІДПОВІДЬ НА ВАШЕ ПИТАННЯ**
 
 ❓ **Питання:** "${question}"
 
@@ -866,23 +986,27 @@ async function handleUserQuestion(chatId, question) {
 
 🎁 **Потрібна детальна консультація?** Перша сесія всього 70 грн!`;
 
-    await bot.sendMessage(chatId, response, {
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: '⚡ Замовити консультацію - 70 грн', callback_data: 'service_individual' }],
-                [{ text: '🔮 Ще одне питання', callback_data: 'ask_another' }]
-            ]
+        await bot.sendMessage(chatId, response, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '⚡ Замовити консультацію - 70 грн', callback_data: 'service_individual' }],
+                    [{ text: '🔮 Ще одне питання', callback_data: 'ask_another' }]
+                ]
+            }
+        });
+        
+        if (users.has(chatId)) {
+            collectLead(chatId, users.get(chatId), 'question_asked');
         }
-    });
-    
-    if (users.has(chatId)) {
-        collectLead(chatId, users.get(chatId), 'question_asked');
+    } catch (error) {
+        console.error('❌ Помилка відповіді на питання:', error);
     }
 }
 
 async function handleQuestionPrompt(chatId) {
-    const promptMessage = `🎯 **ЗАДАЙТЕ ВАШЕ ПИТАННЯ**
+    try {
+        const promptMessage = `🎯 **ЗАДАЙТЕ ВАШЕ ПИТАННЯ**
 
 Напишіть своє питання, і я дам вам безкоштовну відповідь через карти Таро!
 
@@ -894,11 +1018,15 @@ async function handleQuestionPrompt(chatId) {
 
 ✨ Просто напишіть своє питання наступним повідомленням!`;
 
-    await bot.sendMessage(chatId, promptMessage, { parse_mode: 'Markdown' });
+        await bot.sendMessage(chatId, promptMessage, { parse_mode: 'Markdown' });
+    } catch (error) {
+        console.error('❌ Помилка промпту питання:', error);
+    }
 }
 
 async function handleConsultationRedirect(chatId) {
-    const redirectMessage = `📞 **ПЕРСОНАЛЬНА КОНСУЛЬТАЦІЯ**
+    try {
+        const redirectMessage = `📞 **ПЕРСОНАЛЬНА КОНСУЛЬТАЦІЯ**
 
 🎁 **СПЕЦІАЛЬНА ПРОПОЗИЦІЯ:** 70 грн замість 100!
 
@@ -913,24 +1041,28 @@ async function handleConsultationRedirect(chatId) {
 
 🛒 **Як замовити:**`;
 
-    await bot.sendMessage(chatId, redirectMessage, {
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: '⚡ Швидке замовлення в боті', callback_data: 'service_individual' }],
-                [{ text: '🌐 Замовити через сайт', url: 'https://theglamstyle.com.ua' }],
-                [{ text: '📱 Написати в Instagram', url: 'https://instagram.com/miaxialip' }]
-            ]
+        await bot.sendMessage(chatId, redirectMessage, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '⚡ Швидке замовлення в боті', callback_data: 'service_individual' }],
+                    [{ text: '🌐 Замовити через сайт', url: 'https://theglamstyle.com.ua' }],
+                    [{ text: '📱 Написати в Instagram', url: 'https://instagram.com/miaxialip' }]
+                ]
+            }
+        });
+        
+        if (users.has(chatId)) {
+            collectLead(chatId, users.get(chatId), 'consultation_interest');
         }
-    });
-    
-    if (users.has(chatId)) {
-        collectLead(chatId, users.get(chatId), 'consultation_interest');
+    } catch (error) {
+        console.error('❌ Помилка редіректу консультації:', error);
     }
 }
 
 async function handleChannelPromo(chatId) {
-    const channelMessage = `📺 **НАШ TELEGRAM КАНАЛ**
+    try {
+        const channelMessage = `📺 **НАШ TELEGRAM КАНАЛ**
 
 🔮 Підписуйтесь на @MiaxiaLipTarot!
 
@@ -945,19 +1077,23 @@ async function handleChannelPromo(chatId) {
 
 💫 Приєднуйтесь до нашої спільноти духовного розвитку!`;
 
-    await bot.sendMessage(chatId, channelMessage, {
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: '📺 Підписатися на канал', url: 'https://t.me/MiaxiaLipTarot' }],
-                [{ text: '📱 Instagram', url: 'https://instagram.com/miaxialip' }]
-            ]
-        }
-    });
+        await bot.sendMessage(chatId, channelMessage, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '📺 Підписатися на канал', url: 'https://t.me/MiaxiaLipTarot' }],
+                    [{ text: '📱 Instagram', url: 'https://instagram.com/miaxialip' }]
+                ]
+            }
+        });
+    } catch (error) {
+        console.error('❌ Помилка промо каналу:', error);
+    }
 }
 
 async function handleSpecialPrices(chatId) {
-    const pricesMessage = `🎁 **СПЕЦІАЛЬНІ ЦІНИ ДЛЯ КОРИСТУВАЧІВ БОТА**
+    try {
+        const pricesMessage = `🎁 **СПЕЦІАЛЬНІ ЦІНИ ДЛЯ КОРИСТУВАЧІВ БОТА**
 
 💎 **АКЦІЙНІ ПРОПОЗИЦІЇ:**
 
@@ -980,25 +1116,29 @@ async function handleSpecialPrices(chatId) {
 
 ⏰ **Акція діє тільки через бот!**`;
 
-    await bot.sendMessage(chatId, pricesMessage, {
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: '⚡ Швидке замовлення', callback_data: 'quick_order' }],
-                [{ text: '🌐 Сайт (без знижок)', url: 'https://theglamstyle.com.ua' }]
-            ]
-        }
-    });
+        await bot.sendMessage(chatId, pricesMessage, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '⚡ Швидке замовлення', callback_data: 'quick_order' }],
+                    [{ text: '🌐 Сайт (без знижок)', url: 'https://theglamstyle.com.ua' }]
+                ]
+            }
+        });
+    } catch (error) {
+        console.error('❌ Помилка спеціальних цін:', error);
+    }
 }
 
 async function handleAbout(chatId) {
-    const aboutMessage = `💎 **ПРО MIAXIALIP**
+    try {
+        const aboutMessage = `💎 **ПРО MIAXIALIP**
 
 🌟 Привіт! Я Міа - ваш провідник у світі Таро!
 
 🔮 **Мій досвід:**
 • 5+ років практики Таро
-• Більше 1000+ консультацій
+• Більше 2000+ консультацій
 • Індивідуальний підхід до кожного
 • Сучасні методи інтерпретації
 
@@ -1013,16 +1153,19 @@ async function handleAbout(chatId) {
 
 🌈 *Таро - це інструмент самопізнання, доступний кожному!*`;
 
-    await bot.sendMessage(chatId, aboutMessage, {
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: '📱 Instagram', url: 'https://instagram.com/miaxialip' }],
-                [{ text: '🌐 Сайт', url: 'https://theglamstyle.com.ua' }],
-                [{ text: '⚡ Замовити консультацію', callback_data: 'service_individual' }]
-            ]
-        }
-    });
+        await bot.sendMessage(chatId, aboutMessage, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '📱 Instagram', url: 'https://instagram.com/miaxialip' }],
+                    [{ text: '🌐 Сайт', url: 'https://theglamstyle.com.ua' }],
+                    [{ text: '⚡ Замовити консультацію', callback_data: 'service_individual' }]
+                ]
+            }
+        });
+    } catch (error) {
+        console.error('❌ Помилка про MiaxiaLip:', error);
+    }
 }
 
 // Звіт по замовленнях
@@ -1097,29 +1240,22 @@ async function getStatistics() {
 async function startBot() {
     await loadUserData();
     
-    // Запуск ChatGPT автопостів (якщо доступний)
-    try {
-        if (chatGPTIntegration && chatGPTIntegration.scheduleSmartPosts) {
-            chatGPTIntegration.scheduleSmartPosts(bot, CHANNEL_ID);
-            console.log('✅ ChatGPT автопости активні');
-        } else {
-            console.log('⚠️ ChatGPT автопости недоступні');
-        }
-    } catch (error) {
-        console.log('⚠️ Помилка запуску ChatGPT автопостів:', error.message);
-    }
+    // Запуск ChatGPT автопостів з обов'язковими контактами
+    scheduleSmartPostsWithFooter(bot, CHANNEL_ID);
     
     console.log('🤖 Повний цикл бота MiaxiaLip запущено!');
     console.log('🎯 Лідогенерація + Прийом замовлень активні');
+    console.log('🧠 ChatGPT контент для каналу активний');
     console.log('📊 Статистика збирається');
-    console.log('🔗 Обов\'язковий футер з контактами додається до всіх постів');
+    console.log('📬 Обов\'язкові контакти додаються до всіх постів');
     
     const hasOpenAI = process.env.OPENAI_API_KEY ? '✅' : '❌';
-    const hasChatGPT = chatGPTIntegration ? '✅' : '❌';
+    const hasChatGPT = chatGPTIntegration && chatGPTIntegration.sendSmartPost !== (() => Promise.resolve(false)) ? '✅' : '❌';
     console.log(`🔑 ChatGPT API: ${hasOpenAI}`);
     console.log(`🧠 ChatGPT модуль: ${hasChatGPT}`);
     
-    await bot.sendMessage(ADMIN_CHAT_ID, `🚀 Повний цикл бота запущено!
+    try {
+        await bot.sendMessage(ADMIN_CHAT_ID, `🚀 Повний цикл бота запущено!
 
 🎯 **Функції:**
 • ✅ Лідогенерація (безкоштовні розклади)
@@ -1136,16 +1272,22 @@ async function startBot() {
 🔗 **Повний цикл:**
 Канал → Бот → Безкоштовний розклад → Замовлення → Сповіщення адміну
 
+📬 **Контакти:** Автоматично додаються до кожного поста ChatGPT
+
 Команди:
 /admin - повна панель керування`);
+    } catch (error) {
+        console.error('❌ Помилка сповіщення про запуск:', error);
+    }
 }
 
 // Щоденна статистика (21:00)
 cron.schedule('0 21 * * *', async () => {
-    const stats = await getStatistics();
-    const gptStats = getChatGPTStatsSafe();
-    
-    const statsMessage = `📊 **ЩОДЕННА СТАТИСТИКА ПОВНОГО ЦИКЛУ**
+    try {
+        const stats = await getStatistics();
+        const gptStats = getChatGPTStats();
+        
+        const statsMessage = `📊 **ЩОДЕННА СТАТИСТИКА ПОВНОГО ЦИКЛУ**
 
 👥 **Користувачі:** ${stats.totalUsers} (+${stats.newToday})
 🎯 **Ліди:** ${stats.totalLeads} (конверсія ${stats.conversionRate}%)
@@ -1153,12 +1295,12 @@ cron.schedule('0 21 * * *', async () => {
 🔥 **Гарячі ліди:** ${stats.hotLeads}
 
 🤖 **ChatGPT:** ${gptStats.successRate}% успішність
+📬 **Контакти:** автоматично додаються до постів
 ⚡ **Ефективність:** повний цикл працює`;
 
-    try {
         await bot.sendMessage(ADMIN_CHAT_ID, statsMessage, { parse_mode: 'Markdown' });
     } catch (error) {
-        console.error('Помилка відправки щоденної статистики:', error);
+        console.error('❌ Помилка щоденної статистики:', error);
     }
 });
 
@@ -1170,7 +1312,11 @@ process.on('unhandledRejection', (error) => {
 process.on('SIGINT', async () => {
     console.log('🛑 Зупинка повного циклу бота...');
     await saveUserData();
-    await bot.sendMessage(ADMIN_CHAT_ID, '⏹️ Повний цикл бота зупинено');
+    try {
+        await bot.sendMessage(ADMIN_CHAT_ID, '⏹️ Повний цикл бота зупинено');
+    } catch (error) {
+        console.error('❌ Помилка сповіщення про зупинку:', error);
+    }
     process.exit(0);
 });
 
