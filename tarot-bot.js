@@ -1,10 +1,18 @@
-// Телеграм бот для таро MiaxiaLip
+// Телеграм бот для таро MiaxiaLip з ChatGPT інтеграцією
 // Запуск: node tarot-bot.js
 
 const TelegramBot = require('node-telegram-bot-api');
 const cron = require('node-cron');
 const fs = require('fs').promises;
 const path = require('path');
+
+// Підключення ChatGPT інтеграції
+const { 
+    scheduleSmartPosts, 
+    testChatGPT, 
+    sendSmartPost,
+    getChatGPTStats 
+} = require('./chatgpt-integration');
 
 // Завантаження конфігурації
 let config;
@@ -43,7 +51,7 @@ const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 let users = new Map();
 let userSessions = new Map();
 
-// Картки Таро
+// Картки Таро (залишаємо для інтерактивних розкладів)
 const tarotCards = [
     { name: "Дурень", meaning: "Нові початки, спонтанність, innocence", emoji: "🃏" },
     { name: "Маг", meaning: "Воля, прояв, ресурси", emoji: "🎩" },
@@ -69,7 +77,7 @@ const tarotCards = [
     { name: "Світ", meaning: "Завершення, досягнення, виконання", emoji: "🌍" }
 ];
 
-// Зодіакальні знаки та прогнози
+// Зодіакальні знаки
 const zodiacSigns = [
     { name: "Овен", emoji: "♈", dates: "21.03 - 19.04" },
     { name: "Телець", emoji: "♉", dates: "20.04 - 20.05" },
@@ -84,23 +92,6 @@ const zodiacSigns = [
     { name: "Водолій", emoji: "♒", dates: "20.01 - 18.02" },
     { name: "Риби", emoji: "♓", dates: "19.02 - 20.03" }
 ];
-
-// Шаблони постів для автоматизації
-const postTemplates = {
-    daily: [
-        "🌅 Доброго ранку! Сьогодні картка дня: {card}\n\n✨ {meaning}\n\n💫 Як ця енергія вплине на ваш день?",
-        "🌟 Карта дня від MiaxiaLip: {card}\n\n🔮 {meaning}\n\n💎 Які можливості відкриває цей день для вас?",
-        "☀️ Ранкове послання від Таро: {card}\n\n🌸 {meaning}\n\n🙏 Бажаю натхненного дня!"
-    ],
-    weekly: [
-        "📅 Тижневий прогноз від MiaxiaLip!\n\n🔮 Основна енергія тижня: {card}\n\n✨ {meaning}\n\n💫 Використайте цю енергію для досягнення своїх цілей!",
-        "🌙 Астрологічний тиждень розпочинається!\n\n🃏 Провідна карта: {card}\n\n🌟 {meaning}\n\n🦋 Нехай цей тиждень принесе вам гармонію!"
-    ],
-    motivation: [
-        "💪 Мотиваційна картка від Таро: {card}\n\n🌟 {meaning}\n\n✨ Пам'ятайте: ви сильніші, ніж думаєте!",
-        "🦋 Натхнення дня: {card}\n\n💎 {meaning}\n\n🌈 Довіряйте своєму шляху!"
-    ]
-};
 
 // Функції для роботи з базою даних
 async function saveUserData() {
@@ -127,27 +118,9 @@ async function loadUserData() {
     }
 }
 
-// Функції генерації контенту
+// Функції генерації контенту (залишаємо для інтерактивних розкладів)
 function getRandomCard() {
     return tarotCards[Math.floor(Math.random() * tarotCards.length)];
-}
-
-function generateDailyPost() {
-    const card = getRandomCard();
-    const template = postTemplates.daily[Math.floor(Math.random() * postTemplates.daily.length)];
-    return template.replace('{card}', `${card.emoji} ${card.name}`).replace('{meaning}', card.meaning);
-}
-
-function generateWeeklyPost() {
-    const card = getRandomCard();
-    const template = postTemplates.weekly[Math.floor(Math.random() * postTemplates.weekly.length)];
-    return template.replace('{card}', `${card.emoji} ${card.name}`).replace('{meaning}', card.meaning);
-}
-
-function generateMotivationalPost() {
-    const card = getRandomCard();
-    const template = postTemplates.motivation[Math.floor(Math.random() * postTemplates.motivation.length)];
-    return template.replace('{card}', `${card.emoji} ${card.name}`).replace('{meaning}', card.meaning);
 }
 
 // Клавіатури
@@ -191,6 +164,22 @@ const zodiacKeyboard = {
     }
 };
 
+// Адмін клавіатура
+const adminKeyboard = {
+    reply_markup: {
+        inline_keyboard: [
+            [
+                { text: '🧪 Тест ChatGPT', callback_data: 'admin_test_gpt' },
+                { text: '📊 Статистика', callback_data: 'admin_stats' }
+            ],
+            [
+                { text: '📝 Пост зараз', callback_data: 'admin_post_now' },
+                { text: '🔄 Перезапуск', callback_data: 'admin_restart' }
+            ]
+        ]
+    }
+};
+
 // Обробники команд
 bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
@@ -224,6 +213,34 @@ bot.onText(/\/start/, async (msg) => {
     
     // Сповіщення адміну про нового користувача
     await bot.sendMessage(ADMIN_CHAT_ID, `🆕 Новий користувач: ${firstName} (@${msg.from.username || 'без username'})`);
+});
+
+// Адмін команди
+bot.onText(/\/admin/, async (msg) => {
+    if (msg.chat.id.toString() === ADMIN_CHAT_ID) {
+        await bot.sendMessage(ADMIN_CHAT_ID, '👑 Адмін панель:', adminKeyboard);
+    }
+});
+
+bot.onText(/\/test_gpt/, async (msg) => {
+    if (msg.chat.id.toString() === ADMIN_CHAT_ID) {
+        await testChatGPT(bot, msg.chat.id);
+    } else {
+        await bot.sendMessage(msg.chat.id, '❌ Ця команда доступна тільки адміну');
+    }
+});
+
+bot.onText(/\/post_now/, async (msg) => {
+    if (msg.chat.id.toString() === ADMIN_CHAT_ID) {
+        try {
+            await sendSmartPost(bot, CHANNEL_ID);
+            await bot.sendMessage(msg.chat.id, '✅ Розумний пост відправлено в канал!');
+        } catch (error) {
+            await bot.sendMessage(msg.chat.id, `❌ Помилка: ${error.message}`);
+        }
+    } else {
+        await bot.sendMessage(msg.chat.id, '❌ Ця команда доступна тільки адміну');
+    }
 });
 
 bot.on('message', async (msg) => {
@@ -283,11 +300,80 @@ bot.on('message', async (msg) => {
     }
 });
 
-// Обробка кнопок зодіаку
+// Обробка callback кнопок
 bot.on('callback_query', async (callbackQuery) => {
     const message = callbackQuery.message;
     const data = callbackQuery.data;
+    const chatId = message.chat.id;
     
+    // Адмін кнопки
+    if (data.startsWith('admin_') && chatId.toString() === ADMIN_CHAT_ID) {
+        switch (data) {
+            case 'admin_test_gpt':
+                await testChatGPT(bot, chatId);
+                break;
+                
+            case 'admin_stats':
+                const stats = await getStatistics();
+                const gptStats = getChatGPTStats();
+                
+                const statsMessage = `📊 **СТАТИСТИКА БОТА**
+
+👥 **Користувачі:**
+• Всього: ${stats.totalUsers}
+• Активні сьогодні: ${stats.activeToday}
+• Нові сьогодні: ${stats.newToday}
+
+🤖 **ChatGPT:**
+• Всього згенеровано: ${gptStats.totalGenerated}
+• Успішних: ${gptStats.successfulRequests}
+• Помилок: ${gptStats.failedRequests}
+• Успішність: ${gptStats.successRate}%
+• Останнє використання: ${gptStats.lastUsed ? new Date(gptStats.lastUsed).toLocaleString('uk-UA') : 'Ніколи'}
+
+⚙️ **Система:**
+• Статус ChatGPT: ${process.env.OPENAI_API_KEY ? '✅ Активний' : '❌ Неактивний'}
+• Канал: ${CHANNEL_ID}`;
+
+                await bot.editMessageText(statsMessage, {
+                    chat_id: chatId,
+                    message_id: message.message_id,
+                    parse_mode: 'Markdown'
+                });
+                break;
+                
+            case 'admin_post_now':
+                try {
+                    await sendSmartPost(bot, CHANNEL_ID);
+                    await bot.editMessageText('✅ Розумний пост відправлено в канал!', {
+                        chat_id: chatId,
+                        message_id: message.message_id
+                    });
+                } catch (error) {
+                    await bot.editMessageText(`❌ Помилка: ${error.message}`, {
+                        chat_id: chatId,
+                        message_id: message.message_id
+                    });
+                }
+                break;
+                
+            case 'admin_restart':
+                await bot.editMessageText('🔄 Перезапуск бота...', {
+                    chat_id: chatId,
+                    message_id: message.message_id
+                });
+                
+                // Збереження даних перед перезапуском
+                await saveUserData();
+                
+                setTimeout(() => {
+                    process.exit(0); // Railway автоматично перезапустить
+                }, 2000);
+                break;
+        }
+    }
+    
+    // Зодіакальні кнопки
     if (data.startsWith('zodiac_')) {
         const signKey = data.replace('zodiac_', '');
         const sign = zodiacSigns.find(z => z.name.toLowerCase() === getZodiacName(signKey));
@@ -325,7 +411,7 @@ bot.on('callback_query', async (callbackQuery) => {
     await bot.answerCallbackQuery(callbackQuery.id);
 });
 
-// Функції обробки різних типів розкладів
+// Функції обробки різних типів розкладів (залишаємо без змін)
 async function handleDailyReading(chatId) {
     const cards = [getRandomCard(), getRandomCard(), getRandomCard()];
     
@@ -525,7 +611,7 @@ async function handleFreeFormQuestion(chatId, question) {
     });
 }
 
-// Функції допоміжні
+// Допоміжні функції
 function getZodiacName(key) {
     const mapping = {
         'aries': 'овен',
@@ -571,84 +657,6 @@ function getRandomColor() {
     return colors[Math.floor(Math.random() * colors.length)];
 }
 
-// АВТОМАТИЗАЦІЯ ПОСТІВ
-async function publishToChannel(message) {
-    try {
-        await bot.sendMessage(CHANNEL_ID, message, { parse_mode: 'Markdown' });
-        console.log('📢 Пост опубліковано в каналі');
-    } catch (error) {
-        console.error('Помилка публікації в каналі:', error);
-    }
-}
-
-// Розклад автоматичних постів
-// Щоденний пост о 9:00
-cron.schedule('0 9 * * *', async () => {
-    const post = generateDailyPost();
-    await publishToChannel(post);
-    console.log('🌅 Опубліковано щоденний пост');
-});
-
-// Тижневий пост у понеділок о 8:00
-cron.schedule('0 8 * * 1', async () => {
-    const post = generateWeeklyPost();
-    await publishToChannel(post);
-    console.log('📅 Опубліковано тижневий пост');
-});
-
-// Мотиваційний пост о 15:00 (пн, ср, пт)
-cron.schedule('0 15 * * 1,3,5', async () => {
-    const post = generateMotivationalPost();
-    await publishToChannel(post);
-    console.log('💪 Опубліковано мотиваційний пост');
-});
-
-// Вечірній пост о 20:00 (вт, чт, сб)
-cron.schedule('0 20 * * 2,4,6', async () => {
-    const cards = [getRandomCard(), getRandomCard()];
-    const post = `🌙 **ВЕЧІРНЯ РЕФЛЕКСІЯ**
-
-🔮 Що день навчив: ${cards[0].emoji} ${cards[0].name}
-${cards[0].meaning}
-
-✨ Що взяти в завтра: ${cards[1].emoji} ${cards[1].name}  
-${cards[1].meaning}
-
-💫 *Доброї ночі та солодких снів!*`;
-    
-    await publishToChannel(post);
-    console.log('🌙 Опубліковано вечірній пост');
-});
-
-// Функція для залучення користувачів з соціальних мереж
-async function generateSocialMediaContent() {
-    const content = {
-        instagram: {
-            story: `🔮 Картка дня в Telegram! 
-Приєднуйтесь @miaxialip_tarot_bot`,
-            post: `✨ Щоденні розклади Таро тепер у Telegram! 
-
-🎯 Що вас чекає:
-• Безкоштовні розклади
-• Гороскопи 
-• Персональні консультації
-• Автоматичні щоденні пости
-
-🔗 Посилання в bio або пошук: @miaxialip_tarot_bot
-
-#таро #гороскоп #астрологія #україна`
-        },
-        tiktok: {
-            script: `Хочеш щоденні розклади Таро БЕЗКОШТОВНО? 
-Переходь в мій Telegram бот! 
-Там тебе чекають розклади на день, любовні прогнози та багато іншого!
-@miaxialip_tarot_bot`
-        }
-    };
-    
-    return content;
-}
-
 // Функція підрахунку статистики
 async function getStatistics() {
     const totalUsers = users.size;
@@ -672,11 +680,18 @@ async function getStatistics() {
 // Щоденна статистика для адміна (21:00)
 cron.schedule('0 21 * * *', async () => {
     const stats = await getStatistics();
-    const statsMessage = `📊 **СТАТИСТИКА ЗА ДЕНЬ**
+    const gptStats = getChatGPTStats();
+    
+    const statsMessage = `📊 **ЩОДЕННА СТАТИСТИКА**
 
-👥 Всього користувачів: ${stats.totalUsers}
-🟢 Активні сьогодні: ${stats.activeToday}  
-🆕 Нові сьогодні: ${stats.newToday}
+👥 **Користувачі:**
+• Всього: ${stats.totalUsers}
+• Активні сьогодні: ${stats.activeToday}  
+• Нові сьогодні: ${stats.newToday}
+
+🤖 **ChatGPT сьогодні:**
+• Успішність: ${gptStats.successRate}%
+• Статус: ${process.env.OPENAI_API_KEY ? '✅ Активний' : '❌ Неактивний'}
 
 📈 Зростання: ${stats.newToday > 0 ? '+' : ''}${stats.newToday} користувачів`;
 
@@ -686,12 +701,29 @@ cron.schedule('0 21 * * *', async () => {
 // Запуск бота
 async function startBot() {
     await loadUserData();
+    
+    // Запуск ChatGPT автопостів замість старих
+    scheduleSmartPosts(bot, CHANNEL_ID);
+    
     console.log('🤖 Telegram бот MiaxiaLip запущено!');
-    console.log('🔮 Автоматизація постів активна');
+    console.log('🧠 ChatGPT інтеграція активна');
+    console.log('📅 Розклад розумних постів активовано');
     console.log('📊 Статистика збирається');
     
+    // Перевірка ChatGPT
+    const hasOpenAI = process.env.OPENAI_API_KEY ? '✅' : '❌';
+    console.log(`🔑 ChatGPT API: ${hasOpenAI}`);
+    
     // Повідомлення адміну про запуск
-    await bot.sendMessage(ADMIN_CHAT_ID, '🚀 Бот MiaxiaLip запущено!\n✅ Всі системи працюють');
+    await bot.sendMessage(ADMIN_CHAT_ID, `🚀 Бот MiaxiaLip запущено!
+✅ Всі системи працюють
+🧠 ChatGPT: ${hasOpenAI}
+📅 Розумні пости активні
+
+Команди адміна:
+/admin - панель керування
+/test_gpt - тест ChatGPT
+/post_now - пост зараз`);
 }
 
 // Обробка помилок
