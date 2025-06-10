@@ -35,13 +35,21 @@ async function sendSmartPostWithFooter(bot, channelId) {
     }
 }
 
-// Підключення ChatGPT інтеграції
-const { 
-    scheduleSmartPosts, 
-    testChatGPT, 
-    sendSmartPost,
-    getChatGPTStats 
-} = require('./chatgpt-integration');
+// Підключення ChatGPT інтеграції (безпечно)
+let chatGPTIntegration = null;
+try {
+    chatGPTIntegration = require('./chatgpt-integration');
+    console.log('✅ ChatGPT інтеграція завантажена');
+} catch (error) {
+    console.log('⚠️ ChatGPT інтеграція недоступна:', error.message);
+    // Створюємо заглушки
+    chatGPTIntegration = {
+        scheduleSmartPosts: () => console.log('ChatGPT автопости вимкнені'),
+        testChatGPT: () => Promise.resolve(false),
+        sendSmartPost: () => Promise.resolve(false),
+        getChatGPTStats: () => ({ successRate: 0 })
+    };
+}
 
 // Завантаження конфігурації
 let config;
@@ -640,7 +648,7 @@ bot.on('callback_query', async (callbackQuery) => {
                         message_id: message.message_id
                     });
                     
-                    const testResult = await testChatGPT();
+                    const testResult = await testChatGPTSafe();
                     await bot.editMessageText(`🧪 **ТЕСТ CHATGPT**\n\n${testResult ? '✅ ChatGPT працює!' : '❌ ChatGPT недоступний!'}`, {
                         chat_id: chatId,
                         message_id: message.message_id,
@@ -662,9 +670,9 @@ bot.on('callback_query', async (callbackQuery) => {
                         message_id: message.message_id
                     });
                     
-                    const postResult = await sendSmartPostWithFooter(bot, CHANNEL_ID);
+                    const postResult = await sendSmartPostSafe(bot, CHANNEL_ID);
                     
-                    await bot.editMessageText(`📝 **ПОСТ ВІДПРАВЛЕНО**\n\n${postResult ? '✅ Пост опублікований в каналі з контактами!' : '❌ Помилка публікації!'}`, {
+                    await bot.editMessageText(`📝 **ПОСТ ВІДПРАВЛЕНО**\n\n${postResult ? '✅ Пост опублікований в каналі з контактами!' : '❌ Помилка публікації або ChatGPT недоступний!'}`, {
                         chat_id: chatId,
                         message_id: message.message_id,
                         parse_mode: 'Markdown'
@@ -740,7 +748,7 @@ bot.on('callback_query', async (callbackQuery) => {
                 
             case 'admin_stats':
                 const stats = await getStatistics();
-                const gptStats = getChatGPTStats();
+                const gptStats = getChatGPTStatsSafe();
                 
                 const statsMessage = `📊 **СТАТИСТИКА ЛІДОГЕНЕРАЦІЇ + ЗАМОВЛЕНЬ**
 
@@ -1089,24 +1097,34 @@ async function getStatistics() {
 async function startBot() {
     await loadUserData();
     
-    // Запуск ChatGPT автопостів (з автоматичним додаванням футера)
-    scheduleSmartPosts(bot, CHANNEL_ID);
+    // Запуск ChatGPT автопостів (якщо доступний)
+    try {
+        if (chatGPTIntegration && chatGPTIntegration.scheduleSmartPosts) {
+            chatGPTIntegration.scheduleSmartPosts(bot, CHANNEL_ID);
+            console.log('✅ ChatGPT автопости активні');
+        } else {
+            console.log('⚠️ ChatGPT автопости недоступні');
+        }
+    } catch (error) {
+        console.log('⚠️ Помилка запуску ChatGPT автопостів:', error.message);
+    }
     
     console.log('🤖 Повний цикл бота MiaxiaLip запущено!');
     console.log('🎯 Лідогенерація + Прийом замовлень активні');
-    console.log('🧠 ChatGPT контент для каналу активний');
     console.log('📊 Статистика збирається');
     console.log('🔗 Обов\'язковий футер з контактами додається до всіх постів');
     
     const hasOpenAI = process.env.OPENAI_API_KEY ? '✅' : '❌';
+    const hasChatGPT = chatGPTIntegration ? '✅' : '❌';
     console.log(`🔑 ChatGPT API: ${hasOpenAI}`);
+    console.log(`🧠 ChatGPT модуль: ${hasChatGPT}`);
     
     await bot.sendMessage(ADMIN_CHAT_ID, `🚀 Повний цикл бота запущено!
 
 🎯 **Функції:**
 • ✅ Лідогенерація (безкоштовні розклади)
 • ✅ Прийом замовлень (інтеграція з системою)
-• ✅ ChatGPT контент для каналу
+• ${hasChatGPT} ChatGPT контент для каналу
 • ✅ Аналітика лідів та замовлень
 • ✅ Автоматичне додавання контактів до постів
 
@@ -1125,7 +1143,7 @@ async function startBot() {
 // Щоденна статистика (21:00)
 cron.schedule('0 21 * * *', async () => {
     const stats = await getStatistics();
-    const gptStats = getChatGPTStats();
+    const gptStats = getChatGPTStatsSafe();
     
     const statsMessage = `📊 **ЩОДЕННА СТАТИСТИКА ПОВНОГО ЦИКЛУ**
 
@@ -1137,7 +1155,11 @@ cron.schedule('0 21 * * *', async () => {
 🤖 **ChatGPT:** ${gptStats.successRate}% успішність
 ⚡ **Ефективність:** повний цикл працює`;
 
-    await bot.sendMessage(ADMIN_CHAT_ID, statsMessage, { parse_mode: 'Markdown' });
+    try {
+        await bot.sendMessage(ADMIN_CHAT_ID, statsMessage, { parse_mode: 'Markdown' });
+    } catch (error) {
+        console.error('Помилка відправки щоденної статистики:', error);
+    }
 });
 
 // Обробка помилок
