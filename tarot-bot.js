@@ -51,7 +51,7 @@ function addMandatoryFooter(postText) {
 // Безпечна обгортка для відправки постів з автоматичним футером
 async function sendSmartPostWithFooter(bot, channelId) {
     try {
-        if (!sendSmartPost) {
+        if (!sendSmartPost || typeof sendSmartPost !== 'function') {
             console.log('⚠️ ChatGPT недоступний для постів');
             return false;
         }
@@ -752,6 +752,16 @@ bot.on('callback_query', async (callbackQuery) => {
                             message_id: message.message_id
                         });
                         
+                        // Безпечна перевірка наявності функції
+                        if (!testChatGPT || typeof testChatGPT !== 'function') {
+                            await bot.editMessageText(`🧪 **ТЕСТ CHATGPT**\n\n❌ ChatGPT модуль недоступний!`, {
+                                chat_id: chatId,
+                                message_id: message.message_id,
+                                parse_mode: 'Markdown'
+                            });
+                            break;
+                        }
+                        
                         const testResult = await testChatGPT();
                         await bot.editMessageText(`🧪 **ТЕСТ CHATGPT**\n\n${testResult ? '✅ ChatGPT працює!' : '❌ ChatGPT недоступний!'}`, {
                             chat_id: chatId,
@@ -1150,6 +1160,7 @@ async function handleAbout(chatId) {
 • Практичні поради  
 • Підтримка в складних ситуаціях
 • Доступні ціни
+• Анонімність гарантована
 
 🌈 *Таро - це інструмент самопізнання, доступний кожному!*`;
 
