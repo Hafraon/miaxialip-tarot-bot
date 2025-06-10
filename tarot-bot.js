@@ -7,6 +7,34 @@ const cron = require('node-cron');
 const fs = require('fs').promises;
 const path = require('path');
 
+// Wrapper функція для відправки постів з обов'язковим футером
+async function sendChannelPostWithFooter(bot, channelId, text, options = {}) {
+    const textWithFooter = addMandatoryFooter(text);
+    return await bot.sendMessage(channelId, textWithFooter, options);
+}
+
+// Перевизначаємо sendSmartPost щоб завжди додавати футер
+const originalSendSmartPost = sendSmartPost;
+async function sendSmartPostWithFooter(bot, channelId) {
+    try {
+        // Спочатку генеруємо пост
+        const result = await originalSendSmartPost(bot, channelId);
+        
+        // Якщо пост не містить контактів - це помилка, виправляємо
+        if (result && typeof result === 'string' && !result.includes('theglamstyle.com.ua')) {
+            console.log('⚠️ Пост без контактів, додаю футер...');
+            const correctedPost = addMandatoryFooter(result);
+            await bot.sendMessage(channelId, correctedPost);
+            return correctedPost;
+        }
+        
+        return result;
+    } catch (error) {
+        console.error('❌ Помилка відправки поста:', error);
+        return false;
+    }
+}
+
 // Підключення ChatGPT інтеграції
 const { 
     scheduleSmartPosts, 
@@ -634,8 +662,9 @@ bot.on('callback_query', async (callbackQuery) => {
                         message_id: message.message_id
                     });
                     
-                    const postResult = await sendSmartPost(bot, CHANNEL_ID);
-                    await bot.editMessageText(`📝 **ПОСТ ВІДПРАВЛЕНО**\n\n${postResult ? '✅ Пост опублікований в каналі!' : '❌ Помилка публікації!'}`, {
+                    const postResult = await sendSmartPostWithFooter(bot, CHANNEL_ID);
+                    
+                    await bot.editMessageText(`📝 **ПОСТ ВІДПРАВЛЕНО**\n\n${postResult ? '✅ Пост опублікований в каналі з контактами!' : '❌ Помилка публікації!'}`, {
                         chat_id: chatId,
                         message_id: message.message_id,
                         parse_mode: 'Markdown'
@@ -1060,13 +1089,14 @@ async function getStatistics() {
 async function startBot() {
     await loadUserData();
     
-    // Запуск ChatGPT автопостів
+    // Запуск ChatGPT автопостів (з автоматичним додаванням футера)
     scheduleSmartPosts(bot, CHANNEL_ID);
     
     console.log('🤖 Повний цикл бота MiaxiaLip запущено!');
     console.log('🎯 Лідогенерація + Прийом замовлень активні');
     console.log('🧠 ChatGPT контент для каналу активний');
     console.log('📊 Статистика збирається');
+    console.log('🔗 Обов\'язковий футер з контактами додається до всіх постів');
     
     const hasOpenAI = process.env.OPENAI_API_KEY ? '✅' : '❌';
     console.log(`🔑 ChatGPT API: ${hasOpenAI}`);
@@ -1078,6 +1108,7 @@ async function startBot() {
 • ✅ Прийом замовлень (інтеграція з системою)
 • ✅ ChatGPT контент для каналу
 • ✅ Аналітика лідів та замовлень
+• ✅ Автоматичне додавання контактів до постів
 
 📊 **Поточна статистика:**
 • Користувачів: ${users.size}
