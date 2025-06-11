@@ -131,8 +131,8 @@ try {
 // Отримання конфігурації
 const BOT_TOKEN = config.telegram.botToken;
 const ADMIN_CHAT_ID = config.telegram.adminChatId;
-const CHANNEL_ID = config.telegram.channelId;
-const OLD_BOT_CHAT_ID = '603047391'; // Chat ID для старого бота (числовий формат)
+// ЗМІНЕНО: новий канал Міа замість старого
+const CHANNEL_ID = '@miaxiataro'; // https://t.me/miaxiataro
 
 // Перевірка обов'язкових параметрів
 if (!BOT_TOKEN || BOT_TOKEN === 'ВСТАВТЕ_ВАШ_ТОКЕН_БОТА_СЮДИ') {
@@ -182,6 +182,22 @@ const tarotCards = [
     { name: "Сонце", meaning: "Радість, успіх, позитивність", emoji: "☀️" },
     { name: "Суд", meaning: "Відродження, прощення, пробудження", emoji: "📯" },
     { name: "Світ", meaning: "Завершення, досягнення, виконання", emoji: "🌍" }
+];
+
+// ДОДАНО: Знаки зодіаку для гороскопу
+const zodiacSigns = [
+    { name: "♈ Овен", period: "21.03 - 19.04", element: "Вогонь", emoji: "🔥" },
+    { name: "♉ Телець", period: "20.04 - 20.05", element: "Земля", emoji: "🌱" },
+    { name: "♊ Близнюки", period: "21.05 - 20.06", element: "Повітря", emoji: "🌬️" },
+    { name: "♋ Рак", period: "21.06 - 22.07", element: "Вода", emoji: "🌊" },
+    { name: "♌ Лев", period: "23.07 - 22.08", element: "Вогонь", emoji: "🔥" },
+    { name: "♍ Діва", period: "23.08 - 22.09", element: "Земля", emoji: "🌱" },
+    { name: "♎ Терези", period: "23.09 - 22.10", element: "Повітря", emoji: "🌬️" },
+    { name: "♏ Скорпіон", period: "23.10 - 21.11", element: "Вода", emoji: "🌊" },
+    { name: "♐ Стрілець", period: "22.11 - 21.12", element: "Вогонь", emoji: "🔥" },
+    { name: "♑ Козеріг", period: "22.12 - 19.01", element: "Земля", emoji: "🌱" },
+    { name: "♒ Водолій", period: "20.01 - 18.02", element: "Повітря", emoji: "🌬️" },
+    { name: "♓ Риби", period: "19.02 - 20.03", element: "Вода", emoji: "🌊" }
 ];
 
 // Список послуг
@@ -254,6 +270,11 @@ function collectLead(chatId, user, action) {
 // Функції генерації контенту
 function getRandomCard() {
     return tarotCards[Math.floor(Math.random() * tarotCards.length)];
+}
+
+// ДОДАНО: Функція отримання випадкового знака зодіаку
+function getRandomZodiacSign() {
+    return zodiacSigns[Math.floor(Math.random() * zodiacSigns.length)];
 }
 
 // Клавіатури
@@ -406,7 +427,8 @@ bot.on('message', async (msg) => {
                 break;
                 
             case '⭐ Гороскоп на день':
-                await bot.sendMessage(chatId, '🌟 Функція гороскопу буде додана незабаром!');
+                // ВИПРАВЛЕНО: додана функція гороскопу
+                await handleHoroscope(chatId);
                 break;
                 
             case '🎯 Задати питання':
@@ -592,35 +614,7 @@ async function confirmOrder(chatId) {
             console.error('❌ Помилка сповіщення адміна:', error);
         }
         
-        // ВІДПРАВЛЯЄМО в старий бот @MiaxiaTaro_bot з обов'язковими контактами
-        const oldBotFormat = `🔔 Нове замовлення з сайту MiaxiaLip!
-
-👤 Ім'я: ${orderData.name}
-📱 Телефон: ${orderData.phone}
-🔮 Послуга: ${service.name}
-📷 Instagram: ${orderData.instagram}
-
-🔮 Записатися на консультацію:
-🌐 theglamstyle.com.ua
-📱 Instagram: @miaxialip
-🤖 Telegram бот: @miaxialiptarotbot
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🌐 Сайт: theglamstyle.com.ua
-📅 Дата подачі: ${new Date().toLocaleString('uk-UA')}`;
-        
-        try {
-            await bot.sendMessage(OLD_BOT_CHAT_ID, oldBotFormat);
-            console.log('✅ Замовлення відправлено в старий бот @MiaxiaTaro_bot');
-        } catch (error) {
-            console.error('❌ Помилка відправки в старий бот:', error);
-            // Альтернативно відправляємо адміну
-            try {
-                await bot.sendMessage(ADMIN_CHAT_ID, `⚠️ Не вдалося відправити замовлення в @MiaxiaTaro_bot:\n\n${oldBotFormat}`);
-            } catch (e) {
-                console.error('❌ Критична помилка сповіщення:', e);
-            }
-        }
+        // ВИДАЛЕНО: відправка в старий бот, тепер всі замовлення тільки в @miaxialip_tarot_bot
         
         // Повідомляємо користувача
         await bot.sendMessage(chatId, `🎉 **ЗАМОВЛЕННЯ ПІДТВЕРДЖЕНО!**
@@ -635,7 +629,7 @@ async function confirmOrder(chatId) {
 
 🙏 Дякуємо за довіру! Незабаром ви отримаєте відповіді на свої питання!
 
-📺 Підписуйтесь на наш канал: @MiaxiaLipTarot`, {
+📺 Підписуйтесь на наш канал: @miaxiataro`, {
             parse_mode: 'Markdown',
             reply_markup: mainKeyboard.reply_markup
         });
@@ -652,6 +646,48 @@ async function confirmOrder(chatId) {
         }
     } catch (error) {
         console.error('❌ Помилка підтвердження замовлення:', error);
+    }
+}
+
+// ДОДАНО: Функція гороскопу
+async function handleHoroscope(chatId) {
+    try {
+        const sign = getRandomZodiacSign();
+        const card = getRandomCard();
+        
+        const horoscope = `⭐ **ГОРОСКОП НА ДЕНЬ**
+
+${sign.emoji} **${sign.name}** (${sign.period})
+
+🔮 **Карта дня:** ${card.emoji} ${card.name}
+
+✨ **Прогноз:** ${card.meaning}
+
+${sign.element === 'Вогонь' ? '🔥 **Енергія вогню:** Сьогодні ваша енергія на піку! Використовуйте це для важливих справ.' :
+  sign.element === 'Земля' ? '🌱 **Енергія землі:** День для практичних рішень та стабільності.' :
+  sign.element === 'Повітря' ? '🌬️ **Енергія повітря:** Відмінний час для спілкування та нових ідей.' :
+  '🌊 **Енергія води:** Довіряйте інтуїції та емоціям сьогодні.'}
+
+💫 *Це загальний прогноз. Для персонального гороскопу замовте консультацію!*
+
+🎁 **Потрібен персональний прогноз?** Консультація всього 70 грн!`;
+
+        await bot.sendMessage(chatId, horoscope, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '⚡ Персональний прогноз - 70 грн', callback_data: 'service_individual' }],
+                    [{ text: '⭐ Інший знак', callback_data: 'another_horoscope' }]
+                ]
+            }
+        });
+        
+        // Збираємо лід
+        if (users.has(chatId)) {
+            collectLead(chatId, users.get(chatId), 'horoscope_reading');
+        }
+    } catch (error) {
+        console.error('❌ Помилка гороскопу:', error);
     }
 }
 
@@ -692,6 +728,13 @@ bot.on('callback_query', async (callbackQuery) => {
         const message = callbackQuery.message;
         const data = callbackQuery.data;
         const chatId = message.chat.id;
+        
+        // ДОДАНО: обробка повторного гороскопу
+        if (data === 'another_horoscope') {
+            await handleHoroscope(chatId);
+            await bot.answerCallbackQuery(callbackQuery.id);
+            return;
+        }
         
         // Сервіси
         if (data.startsWith('service_')) {
@@ -798,7 +841,7 @@ bot.on('callback_query', async (callbackQuery) => {
                         });
                         
                         const postResult = await sendSmartPostWithFooter(bot, CHANNEL_ID);
-                        await bot.editMessageText(`📝 **ПОСТ ВІДПРАВЛЕНО**\n\n${postResult ? '✅ Пост опублікований в каналі!\n📬 Контакти додано автоматично!' : '❌ Помилка публікації або ChatGPT недоступний!'}`, {
+                        await bot.editMessageText(`📝 **ПОСТ ВІДПРАВЛЕНО**\n\n${postResult ? '✅ Пост опублікований в каналі @miaxiataro!\n📬 Контакти додано автоматично!' : '❌ Помилка публікації або ChatGPT недоступний!'}`, {
                             chat_id: chatId,
                             message_id: message.message_id,
                             parse_mode: 'Markdown'
@@ -894,6 +937,8 @@ bot.on('callback_query', async (callbackQuery) => {
 
 🤖 **ChatGPT:**
 • Успішність: ${gptStats.successRate}%
+
+📺 **Канал:** @miaxiataro
 
 ⚙️ **Система:**
 • Статус: ✅ Повний цикл (ліди → замовлення)
@@ -1087,7 +1132,7 @@ async function handleChannelPromo(chatId) {
     try {
         const channelMessage = `📺 **НАШ TELEGRAM КАНАЛ**
 
-🔮 Підписуйтесь на @MiaxiaLipTarot!
+🔮 Підписуйтесь на @miaxiataro!
 
 ✨ **Що вас чекає:**
 • Щоденні розклади від ChatGPT
@@ -1104,7 +1149,7 @@ async function handleChannelPromo(chatId) {
             parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: '📺 Підписатися на канал', url: 'https://t.me/MiaxiaLipTarot' }],
+                    [{ text: '📺 Підписатися на канал', url: 'https://t.me/miaxiataro' }],
                     [{ text: '📱 Instagram', url: 'https://instagram.com/miaxialip' }]
                 ]
             }
@@ -1269,7 +1314,7 @@ async function startBot() {
     
     console.log('🤖 Повний цикл бота MiaxiaLip запущено!');
     console.log('🎯 Лідогенерація + Прийом замовлень активні');
-    console.log('🧠 ChatGPT контент для каналу активний');
+    console.log('🧠 ChatGPT контент для каналу @miaxiataro активний');
     console.log('📊 Статистика збирається');
     console.log('📬 ОБОВ\'ЯЗКОВІ контакти додаються до ВСІХ постів');
     
@@ -1283,9 +1328,10 @@ async function startBot() {
 
 🎯 **Функції:**
 • ✅ Лідогенерація (безкоштовні розклади)
-• ✅ Прийом замовлень (інтеграція з системою)
-• ${hasChatGPT} ChatGPT контент для каналу
+• ✅ Прийом замовлень (тільки в @miaxialip_tarot_bot)
+• ${hasChatGPT} ChatGPT контент для каналу @miaxiataro
 • ✅ Аналітика лідів та замовлень
+• ✅ Гороскоп на день відновлено
 • ✅ КОНТАКТИ ДОДАЮТЬСЯ ДО ВСІХ ПОСТІВ АВТОМАТИЧНО
 
 📊 **Поточна статистика:**
@@ -1294,7 +1340,7 @@ async function startBot() {
 • Замовлень: ${orders.size}
 
 🔗 **Повний цикл:**
-Канал → Бот → Безкоштовний розклад → Замовлення → Сповіщення адміну
+Канал @miaxiataro → Бот → Безкоштовний розклад → Замовлення → Сповіщення адміну
 
 📬 **ГАРАНТІЯ:** Кожен пост ChatGPT матиме контакти!
 
@@ -1319,6 +1365,7 @@ cron.schedule('0 21 * * *', async () => {
 🔥 **Гарячі ліди:** ${stats.hotLeads}
 
 🤖 **ChatGPT:** ${gptStats.successRate}% успішність
+📺 **Канал:** @miaxiataro
 📬 **Контакти:** ГАРАНТОВАНО в КОЖНОМУ пості
 ⚡ **Ефективність:** повний цикл працює`;
 
