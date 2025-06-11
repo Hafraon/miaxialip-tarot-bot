@@ -17,7 +17,10 @@ try {
     // Створюємо заглушки
     chatGPTIntegration = {
         scheduleSmartPosts: () => console.log('ChatGPT автопости вимкнені'),
-        testChatGPT: () => Promise.resolve(false),
+        testChatGPT: (bot, chatId) => {
+            console.log('⚠️ ChatGPT тест заблокований - модуль недоступний');
+            return Promise.resolve(false);
+        },
         sendSmartPost: () => Promise.resolve(false),
         getChatGPTStats: () => ({ successRate: 0 })
     };
@@ -818,7 +821,7 @@ bot.on('callback_query', async (callbackQuery) => {
                             break;
                         }
                         
-                        const testResult = await testChatGPT();
+                        const testResult = await testChatGPT(bot, chatId);
                         await bot.editMessageText(`🧪 **ТЕСТ CHATGPT**\n\n${testResult ? '✅ ChatGPT працює!' : '❌ ChatGPT недоступний!'}`, {
                             chat_id: chatId,
                             message_id: message.message_id,
